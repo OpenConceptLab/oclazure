@@ -1,9 +1,10 @@
 provider "azurerm" {
   features {}
 
-  subscription_id = "e9a8f37f-c8bf-4dd5-b66e-f80e84714bde"
-  client_id = ""
-  app_id = ""
+  subscription_id = var.az_subscription_id
+  client_id = var.az_client_id
+  client_secret = var.az_client_secret
+  tenant_id = var.az_tenant_id
 }
 
 resource "azurerm_resource_group" "ocl" {
