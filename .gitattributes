@@ -1,0 +1,4 @@
+*.tfvars filter=git-crypt diff=git-crypt
+
+# Never encrypt .gitattribtes
+.gitattributes !filter !diff
