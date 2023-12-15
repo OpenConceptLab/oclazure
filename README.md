@@ -1,2 +1,2 @@
 # oclazure
-Terraform deployment of Azure Cloud
+Terraform deployment of OCL for Azure Cloud
