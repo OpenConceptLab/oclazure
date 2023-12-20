@@ -17,3 +17,13 @@ variable "az_tenant_id" {
   description = "Azure tenant id"
   type = string
 }
+
+variable "db_admin_user" {
+  description = "DB admin user"
+  type = string
+}
+
+variable "db_admin_password" {
+  description = "DB admin password"
+  type = string
+}

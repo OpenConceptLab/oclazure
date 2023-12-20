@@ -55,8 +55,8 @@ resource "azurerm_postgresql_server" "ocl-test-db" {
   geo_redundant_backup_enabled = false
   auto_grow_enabled            = true
 
-  administrator_login          = "psqladmin"
-  administrator_login_password = "H@Sh1CoR3!"
+  administrator_login          = var.db_admin_user
+  administrator_login_password = var.db_admin_password
   version                      = "9.5"
   ssl_enforcement_enabled      = true
 }
@@ -74,7 +74,7 @@ resource "azurerm_postgresql_database" "ocl-test-db" {
   }
 }
 
-/*resource "azurerm_redis_cache" "ocl-test-redis" {
+resource "azurerm_redis_cache" "ocl-test-redis" {
   name                = "ocl-test-redis"
   location            = azurerm_resource_group.ocl_test.location
   resource_group_name = azurerm_resource_group.ocl_test.name
@@ -86,9 +86,9 @@ resource "azurerm_postgresql_database" "ocl-test-db" {
 
   redis_configuration {
   }
-}*/
+}
 
-/*resource "azurerm_elastic_cloud_elasticsearch" "test" {
+/*resource "azurerm_elastic_cloud_elasticsearch" "ocl-test-es" {
   name                        = "ocl-test-es"
   resource_group_name         = azurerm_resource_group.ocl_test.name
   location                    = azurerm_resource_group.ocl_test.location
