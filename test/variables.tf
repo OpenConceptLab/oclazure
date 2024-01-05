@@ -27,3 +27,13 @@ variable "db_admin_password" {
   description = "DB admin password"
   type = string
 }
+
+variable "web_config" {
+  description = "OCL web config"
+  type = map(string)
+}
+
+variable "api_config" {
+  description = "OCL api config"
+  type = map(string)
+}
