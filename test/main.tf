@@ -106,10 +106,11 @@ resource "azurerm_redis_cache" "ocl-test-redis" {
   capacity            = 2
   family              = "C"
   sku_name            = "Basic"
-  enable_non_ssl_port = false
+  enable_non_ssl_port = true
   minimum_tls_version = "1.2"
 
   redis_configuration {
+
   }
 }
 
@@ -144,11 +145,16 @@ resource "kubernetes_deployment" "oclapi2" {
       }
       spec {
         container {
-          image = "docker.io/openconceptlab/oclapi2:production"
+          image = "docker.io/openconceptlab/oclapi2:qa"
           name  = "oclapi2"
 
           port {
             container_port = 8000
+          }
+
+          env {
+            name = "PYTHONUNBUFFERED"
+            value = "0"
           }
 
           dynamic "env" {
@@ -171,12 +177,8 @@ resource "kubernetes_deployment" "oclapi2" {
           }
 
           resources {
-            limits = {
-              cpu    = "0.5"
-              memory = "512Mi"
-            }
             requests = {
-              cpu    = "0.1"
+              cpu    = "0.5"
               memory = "512Mi"
             }
           }
@@ -216,6 +218,11 @@ resource "kubernetes_deployment" "oclweb2" {
             container_port = 4000
           }
 
+          env {
+            name = "PYTHONUNBUFFERED"
+            value = "0"
+          }
+
           dynamic "env" {
             for_each = var.web_config
             content {
@@ -225,12 +232,8 @@ resource "kubernetes_deployment" "oclweb2" {
           }
 
           resources {
-            limits = {
-              cpu    = "0.2"
-              memory = "128Mi"
-            }
             requests = {
-              cpu    = "0.1"
+              cpu    = "0.2"
               memory = "128Mi"
             }
           }
@@ -283,4 +286,30 @@ resource "kubernetes_service" "oclapi2" {
 
     type = "LoadBalancer"
   }
+}
+
+resource "azurerm_storage_account" "ocl-test-account" {
+  name                     = "ocltestaccount"
+  resource_group_name      = azurerm_resource_group.ocl_test.name
+  location                 = azurerm_resource_group.ocl_test.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
+resource "azurerm_storage_container" "ocl-test-exports" {
+  name                  = "ocl-test-exports"
+  storage_account_name  = azurerm_storage_account.ocl-test-account.name
+  container_access_type = "blob"
+}
+
+resource "azurerm_user_assigned_identity" "ocl-test-exports-user" {
+  location            = azurerm_resource_group.ocl_test.location
+  name                = "ocl-test-exports"
+  resource_group_name = azurerm_resource_group.ocl_test.name
+}
+
+resource "azurerm_role_assignment" "ocl-test-exports-role" {
+  scope                = azurerm_storage_account.ocl-test-account.id
+  role_definition_name = "Storage Blob Data Owner"
+  principal_id         = azurerm_user_assigned_identity.ocl-test-exports-user.principal_id
 }
