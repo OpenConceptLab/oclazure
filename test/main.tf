@@ -24,17 +24,57 @@ provider "kubernetes" {
   cluster_ca_certificate = base64decode(azurerm_kubernetes_cluster.ocl-test.kube_config.0.cluster_ca_certificate)
 }
 
+provider "helm" {
+  kubernetes {
+    host = azurerm_kubernetes_cluster.ocl-test.kube_config.0.host
+
+    client_certificate     = base64decode(azurerm_kubernetes_cluster.ocl-test.kube_config.0.client_certificate)
+    client_key             = base64decode(azurerm_kubernetes_cluster.ocl-test.kube_config.0.client_key)
+    cluster_ca_certificate = base64decode(azurerm_kubernetes_cluster.ocl-test.kube_config.0.cluster_ca_certificate)
+  }
+}
+
 locals {
   api_config = merge(var.api_config, {
+    ENVIRONMENT = "production"
     API_BASE_URL = "http://${azurerm_public_ip.ocl-test-api.domain_name_label}.eastus.cloudapp.azure.com"
+    API_HOST = "localhost"
+    API_PORT = "8000"
+    API_INTERNAL_BASE_URL = "http://localhost:8000"
+
     DB_HOST = azurerm_postgresql_flexible_server.ocl-test.fqdn
+    DB_PORT = "5432"
     DB_USER = azurerm_postgresql_flexible_server.ocl-test.administrator_login
     DB_PASSWORD = azurerm_postgresql_flexible_server.ocl-test.administrator_password
     DB_NAME = azurerm_postgresql_flexible_server_database.ocl-test.name
 
+    ES_HOSTS = "elasticsearch-es-http.elastic-system:9200"
+    ES_SCHEME = "https"
+    ES_VERIFY_CERTS = "false"
+    ES_USER = "elastic"
+    ES_PASSWORD = data.kubernetes_secret.es_password.data["elastic"]
+
     REDIS_HOST = azurerm_redis_cache.ocl-test-redis.hostname
     REDIS_PORT = azurerm_redis_cache.ocl-test-redis.port
     REDIS_PASSWORD = azurerm_redis_cache.ocl-test-redis.primary_access_key
+
+    FLOWER_HOST = "flower.openconceptlab.org"
+    FLOWER_PORT = "80"
+
+    IMPORT_DEMO_DATA = "true"
+
+    EMAIL_HOST = "smtp.gmail.com"
+    EMAIL_PORT = "587"
+    EMAIL_USE_TLS = "true"
+
+    #OIDC_SERVER_URL = "https://sso.openconceptlab.org"
+    #OIDC_REALM = "ocl"
+    #FHIR_SUBDOMAIN = "fhir"
+  })
+
+  web_config = merge(var.web_config, {
+    LOGIN_REDIRECT_URL = "http://openconceptlab.eastus.cloudapp.azure.com/"
+    LOGOUT_REDIRECT_URL = "http://openconceptlab.eastus.cloudapp.azure.com/"
   })
 }
 
@@ -126,6 +166,35 @@ resource "random_password" "pass" {
   length = 20
 }
 
+resource "helm_release" "eck-operator" {
+  name       = "eck-operator"
+  repository = "https://helm.elastic.co"
+  chart      = "eck-operator"
+  namespace         = "elastic-system"
+  create_namespace  = true
+  force_update = true
+  dependency_update = true #helm repo update command
+}
+
+resource "kubernetes_manifest" "elasticsearch" {
+  manifest = yamldecode(file("eck/elasticsearch.yaml"))
+
+  depends_on = [
+    helm_release.eck-operator
+  ]
+}
+
+data "kubernetes_secret" "es_password" {
+  metadata {
+    name = "elasticsearch-es-elastic-user"
+    namespace = "elastic-system"
+  }
+
+  depends_on = [
+    kubernetes_manifest.elasticsearch
+  ]
+}
+
 resource "azurerm_postgresql_flexible_server" "ocl-test" {
   name                   = "ocl-test-db"
   resource_group_name    = azurerm_resource_group.ocl-test.name
@@ -174,14 +243,6 @@ resource "azurerm_redis_cache" "ocl-test-redis" {
   }
 }
 
-resource "azurerm_elastic_cloud_elasticsearch" "ocl-test-es" {
-  name                        = "ocl-test-es"
-  resource_group_name         = azurerm_resource_group.ocl-test.name
-  location                    = azurerm_resource_group.ocl-test.location
-    sku_name                    = "ess-consumption-2024_Monthly"
-  elastic_cloud_email_address = "rafal.korytkowski@gmail.com"
-}
-
 resource "kubernetes_deployment" "oclapi2" {
   metadata {
     name = "oclapi2"
@@ -208,6 +269,7 @@ resource "kubernetes_deployment" "oclapi2" {
         container {
           image = "docker.io/openconceptlab/oclapi2:qa"
           name  = "oclapi2"
+          image_pull_policy = "Always"
 
           port {
             container_port = 8000
@@ -287,6 +349,7 @@ resource "kubernetes_deployment" "oclflower" {
         container {
           image = "docker.io/openconceptlab/oclapi2:qa"
           name  = "oclflower"
+          image_pull_policy = "Always"
 
           command = ["bash","-c","./start_flower.sh"]
 
@@ -367,6 +430,7 @@ resource "kubernetes_deployment" "oclcelery" {
         container {
           image = "docker.io/openconceptlab/oclapi2:qa"
           name  = "oclcelery"
+          image_pull_policy = "Always"
 
           command = ["bash", "-c", "CELERY_WORKER_NAME=default ./start_celery_worker.sh -P prefork -Q default -c 2"]
 
@@ -421,6 +485,7 @@ resource "kubernetes_deployment" "oclcelerybeat" {
         container {
           image = "docker.io/openconceptlab/oclapi2:qa"
           name  = "oclcelerybeat"
+          image_pull_policy = "Always"
 
           command = ["bash", "-c", "./start_celery_beat.sh"]
 
@@ -475,6 +540,7 @@ resource "kubernetes_deployment" "oclceleryindexing" {
         container {
           image = "docker.io/openconceptlab/oclapi2:qa"
           name  = "oclceleryindexing"
+          image_pull_policy = "Always"
 
           command = ["bash", "-c", "CELERY_WORKER_NAME=indexing ./start_celery_worker.sh -P prefork -Q indexing -c 5"]
 
@@ -529,6 +595,7 @@ resource "kubernetes_deployment" "oclceleryconcurrent" {
         container {
           image = "docker.io/openconceptlab/oclapi2:qa"
           name  = "oclceleryconcurrent"
+          image_pull_policy = "Always"
 
           command = ["bash", "-c", "CELERY_WORKER_NAME=concurrent ./start_celery_worker.sh -P prefork -Q concurrent -c 5"]
 
@@ -583,6 +650,7 @@ resource "kubernetes_deployment" "oclcelerybulkimportroot" {
         container {
           image = "docker.io/openconceptlab/oclapi2:qa"
           name  = "oclcelerybulkimportroot"
+          image_pull_policy = "Always"
 
           command = ["bash", "-c", "CELERY_WORKER_NAME=bulk_import_root ./start_celery_worker.sh -Q bulk_import_root -c 1"]
 
@@ -637,6 +705,7 @@ resource "kubernetes_deployment" "oclcelerybulkimport0-1" {
         container {
           image = "docker.io/openconceptlab/oclapi2:qa"
           name  = "oclcelerybulkimport0-1"
+          image_pull_policy = "Always"
 
           command = ["bash", "-c", "CELERY_WORKER_NAME=bulk_import_0_1 ./start_celery_worker.sh -Q bulk_import_0,bulk_import_1 -c 1"]
 
@@ -691,6 +760,7 @@ resource "kubernetes_deployment" "oclcelerybulkimport2-3" {
         container {
           image = "docker.io/openconceptlab/oclapi2:qa"
           name  = "oclcelerybulkimport2-3"
+          image_pull_policy = "Always"
 
           command = ["bash", "-c", "CELERY_WORKER_NAME=bulk_import_2_3 ./start_celery_worker.sh -Q bulk_import_2,bulk_import_3 -c 1"]
 
@@ -745,6 +815,7 @@ resource "kubernetes_deployment" "oclweb2" {
         container {
           image = "docker.io/openconceptlab/oclweb2:production"
           name  = "oclweb2"
+          image_pull_policy = "Always"
 
           port {
             container_port = 4000
