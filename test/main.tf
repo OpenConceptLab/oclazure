@@ -37,10 +37,10 @@ provider "helm" {
 locals {
   api_config = merge(var.api_config, {
     ENVIRONMENT = "production"
-    API_BASE_URL = "http://${azurerm_public_ip.ocl-test-api.domain_name_label}.eastus.cloudapp.azure.com"
+    API_BASE_URL = "https://api.who.openconceptlab.org"
     API_HOST = "localhost"
     API_PORT = "8000"
-    API_INTERNAL_BASE_URL = "http://localhost:8000"
+    API_INTERNAL_BASE_URL = "http://oclapi2:80"
 
     DB_HOST = azurerm_postgresql_flexible_server.ocl-test.fqdn
     DB_PORT = "5432"
@@ -69,12 +69,12 @@ locals {
 
     #OIDC_SERVER_URL = "https://sso.openconceptlab.org"
     #OIDC_REALM = "ocl"
-    #FHIR_SUBDOMAIN = "fhir"
+    FHIR_SUBDOMAIN = "fhir"
   })
 
   web_config = merge(var.web_config, {
-    LOGIN_REDIRECT_URL = "http://openconceptlab.eastus.cloudapp.azure.com/"
-    LOGOUT_REDIRECT_URL = "http://openconceptlab.eastus.cloudapp.azure.com/"
+    LOGIN_REDIRECT_URL = "https://app.who.openconceptlab.org/"
+    LOGOUT_REDIRECT_URL = "https://app.who.openconceptlab.org/"
   })
 }
 
@@ -335,6 +335,86 @@ resource "kubernetes_service" "oclapi2" {
   spec {
     selector = {
       App = kubernetes_deployment.oclapi2.spec.0.template.0.metadata[0].labels.App
+    }
+    port {
+      port        = 80
+      target_port = 8000
+    }
+
+    type = "LoadBalancer"
+  }
+}
+
+resource "kubernetes_deployment" "oclfhir" {
+  metadata {
+    name = "oclfhir"
+    labels = {
+      App = "oclfhir"
+    }
+  }
+
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        App = "oclfhir"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          App = "oclfhir"
+        }
+      }
+      spec {
+        subdomain = "fhir"
+        container {
+          image = "docker.io/openconceptlab/oclapi2:qa"
+          name  = "oclapi2"
+          image_pull_policy = "Always"
+
+          port {
+            container_port = 8000
+          }
+
+          env {
+            name = "PYTHONUNBUFFERED"
+            value = "0"
+          }
+
+          dynamic "env" {
+            for_each = local.api_config
+            content {
+              name = env.key
+              value = env.value
+            }
+          }
+
+          resources {
+            requests = {
+              cpu    = "0.5"
+              memory = "512Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+
+resource "kubernetes_service" "oclfhir" {
+  metadata {
+    name = "oclfhir"
+    annotations = {
+      "service.beta.kubernetes.io/azure-dns-label-name" = azurerm_public_ip.ocl-test-api.domain_name_label
+      "service.beta.kubernetes.io/azure-load-balancer-resource-group" = azurerm_resource_group.ocl-test.name
+      "service.beta.kubernetes.io/azure-pip-name" = azurerm_public_ip.ocl-test-api.name
+    }
+  }
+  spec {
+    selector = {
+      App = kubernetes_deployment.oclfhir.spec.0.template.0.metadata[0].labels.App
     }
     port {
       port        = 80
@@ -920,4 +1000,72 @@ resource "azurerm_role_assignment" "ocl-test-exports-role" {
   scope                = azurerm_storage_account.ocl-test-account.id
   role_definition_name = "Storage Blob Data Owner"
   principal_id         = azurerm_user_assigned_identity.ocl-test-exports-user.principal_id
+}
+
+resource "kubernetes_ingress" "ocl-gateway" {
+  metadata {
+    name = "ocl-gateway"
+
+    annotations = {
+      "kubernetes.io/ingress.class" = "azure/application-gateway"
+      "cert-manager.io/cluster-issuer" = "letsencrypt-staging"
+      "cert-manager.io/acme-challenge-type" = "http01"
+    }
+  }
+
+  spec {
+    rule {
+      host = "api.who.openconceptlab.org"
+      http {
+        path {
+          backend {
+            service_name = kubernetes_service.oclapi2.metadata.name
+            service_port = kubernetes_service.oclapi2.spec.port.port
+          }
+        }
+      }
+    }
+
+    rule {
+      host = "app.who.openconceptlab.org"
+      http {
+        path {
+          backend {
+            service_name = kubernetes_service.oclweb2.metadata.name
+            service_port = kubernetes_service.oclweb2.spec.port.port
+          }
+        }
+      }
+    }
+
+    rule {
+      host = "flower.who.openconceptlab.org"
+      http {
+        path {
+          backend {
+            service_name = kubernetes_service.oclflower.metadata.name
+            service_port = kubernetes_service.oclflower.spec.port.port
+          }
+        }
+      }
+    }
+
+    rule {
+      host = "fhir.who.openconceptlab.org"
+      http {
+        path {
+          backend {
+            service_name = kubernetes_service.oclfhir.metadata.name
+            service_port = kubernetes_service.oclfhir.spec.port.port
+          }
+        }
+      }
+    }
+
+    tls {
+      hosts = ["api.who.openconceptlab.org", "app.who.openconceptlab.org", "fhir.who.openconceptlab.org",
+        "flower.who.openconceptlab.org"]
+      secret_name = "letsencrypt-secret"
+    }
+  }
 }
