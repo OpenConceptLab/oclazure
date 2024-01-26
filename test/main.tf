@@ -58,8 +58,8 @@ locals {
     REDIS_PORT = azurerm_redis_cache.ocl-test-redis.port
     REDIS_PASSWORD = azurerm_redis_cache.ocl-test-redis.primary_access_key
 
-    FLOWER_HOST = "flower.openconceptlab.org"
-    FLOWER_PORT = "80"
+    FLOWER_HOST = "flower"
+    FLOWER_PORT = "5555"
 
     IMPORT_DEMO_DATA = "true"
 
@@ -192,6 +192,28 @@ data "kubernetes_secret" "es_password" {
 
   depends_on = [
     kubernetes_manifest.elasticsearch
+  ]
+}
+
+resource "helm_release" "cert-manager" {
+  name       = "cert-manager"
+  repository = "https://charts.jetstack.io"
+  chart      = "cert-manager"
+  namespace         = "cert-manager"
+  create_namespace  = true
+  force_update = true
+  dependency_update = true
+  set {
+    name  = "installCRDs"
+    value = "true"
+  }
+}
+
+resource "kubernetes_manifest" "cert-manager" {
+  manifest = yamldecode(file("cert-manager/clusterissuer.yaml"))
+
+  depends_on = [
+    helm_release.cert-manager
   ]
 }
 
