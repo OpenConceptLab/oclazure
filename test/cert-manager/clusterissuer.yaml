@@ -1,7 +1,7 @@
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
-  name: letsencrypt-staging
+  name: letsencrypt-production
 spec:
   acme:
 
@@ -14,11 +14,11 @@ spec:
     # The staging environment will not issue trusted certificates but is
     # used to ensure that the verification process is working properly
     # before moving to production
-    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    server: https://acme-v02.api.letsencrypt.org/directory
 
     privateKeySecretRef:
       # Secret resource used to store the account's private key.
-      name: letsencrypt-secret
+      name: letsencrypt-production
 
     # Enable the HTTP-01 challenge provider
     # you prove ownership of a domain by ensuring that a particular

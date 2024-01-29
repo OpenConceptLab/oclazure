@@ -37,10 +37,10 @@ provider "helm" {
 locals {
   api_config = merge(var.api_config, {
     ENVIRONMENT = "production"
-    API_BASE_URL = "https://api.who.openconceptlab.org"
+    API_BASE_URL = "https://api.test.who.openconceptlab.org"
     API_HOST = "localhost"
     API_PORT = "8000"
-    API_INTERNAL_BASE_URL = "http://oclapi2:80"
+    API_INTERNAL_BASE_URL = "http://localhost:8000"
 
     DB_HOST = azurerm_postgresql_flexible_server.ocl-test.fqdn
     DB_PORT = "5432"
@@ -59,7 +59,7 @@ locals {
     REDIS_PASSWORD = azurerm_redis_cache.ocl-test-redis.primary_access_key
 
     FLOWER_HOST = "flower"
-    FLOWER_PORT = "5555"
+    FLOWER_PORT = "80"
 
     IMPORT_DEMO_DATA = "true"
 
@@ -73,8 +73,8 @@ locals {
   })
 
   web_config = merge(var.web_config, {
-    LOGIN_REDIRECT_URL = "https://app.who.openconceptlab.org/"
-    LOGOUT_REDIRECT_URL = "https://app.who.openconceptlab.org/"
+    LOGIN_REDIRECT_URL = "https://app.test.who.openconceptlab.org/"
+    LOGOUT_REDIRECT_URL = "https://app.test.who.openconceptlab.org/"
   })
 }
 
@@ -122,6 +122,19 @@ resource "azurerm_public_ip" "ocl-test-flower" {
   }
 }
 
+resource "azurerm_public_ip" "ocl-test-fhir" {
+  name                = "ocl-test-fhir-public-ip"
+  domain_name_label   = "fhir-openconceptlab"
+  resource_group_name = azurerm_resource_group.ocl-test.name
+  location            = azurerm_resource_group.ocl-test.location
+  allocation_method   = "Static"
+  sku = "Standard"
+
+  tags = {
+    environment = "test"
+  }
+}
+
 resource "azurerm_log_analytics_workspace" "ocl-test" {
   name                = "ocl-test"
   location            = azurerm_resource_group.ocl-test.location
@@ -144,6 +157,11 @@ resource "azurerm_kubernetes_cluster" "ocl-test" {
 
   identity {
     type = "SystemAssigned"
+  }
+
+  ingress_application_gateway {
+    gateway_name = "ocl-test-ag"
+    subnet_cidr = "10.225.0.0/16"
   }
 
   oms_agent {
@@ -312,7 +330,7 @@ resource "kubernetes_deployment" "oclapi2" {
 
           resources {
             requests = {
-              cpu    = "0.5"
+              cpu    = "0.2"
               memory = "512Mi"
             }
           }
@@ -392,7 +410,7 @@ resource "kubernetes_deployment" "oclfhir" {
 
           resources {
             requests = {
-              cpu    = "0.5"
+              cpu    = "0.2"
               memory = "512Mi"
             }
           }
@@ -407,9 +425,9 @@ resource "kubernetes_service" "oclfhir" {
   metadata {
     name = "oclfhir"
     annotations = {
-      "service.beta.kubernetes.io/azure-dns-label-name" = azurerm_public_ip.ocl-test-api.domain_name_label
+      "service.beta.kubernetes.io/azure-dns-label-name" = azurerm_public_ip.ocl-test-fhir.domain_name_label
       "service.beta.kubernetes.io/azure-load-balancer-resource-group" = azurerm_resource_group.ocl-test.name
-      "service.beta.kubernetes.io/azure-pip-name" = azurerm_public_ip.ocl-test-api.name
+      "service.beta.kubernetes.io/azure-pip-name" = azurerm_public_ip.ocl-test-fhir.name
     }
   }
   spec {
@@ -542,7 +560,10 @@ resource "kubernetes_deployment" "oclcelery" {
           }
 
           dynamic "env" {
-            for_each = local.api_config
+            for_each = merge(local.api_config, {
+              API_HOST = "oclapi2"
+              API_PORT = 80
+            })
             content {
               name = env.key
               value = env.value
@@ -597,7 +618,10 @@ resource "kubernetes_deployment" "oclcelerybeat" {
           }
 
           dynamic "env" {
-            for_each = local.api_config
+            for_each = merge(local.api_config, {
+              API_HOST = "oclapi2"
+              API_PORT = 80
+            })
             content {
               name = env.key
               value = env.value
@@ -652,7 +676,10 @@ resource "kubernetes_deployment" "oclceleryindexing" {
           }
 
           dynamic "env" {
-            for_each = local.api_config
+            for_each = merge(local.api_config, {
+              API_HOST = "oclapi2"
+              API_PORT = 80
+            })
             content {
               name = env.key
               value = env.value
@@ -707,7 +734,10 @@ resource "kubernetes_deployment" "oclceleryconcurrent" {
           }
 
           dynamic "env" {
-            for_each = local.api_config
+            for_each = merge(local.api_config, {
+              API_HOST = "oclapi2"
+              API_PORT = 80
+            })
             content {
               name = env.key
               value = env.value
@@ -762,7 +792,10 @@ resource "kubernetes_deployment" "oclcelerybulkimportroot" {
           }
 
           dynamic "env" {
-            for_each = local.api_config
+            for_each = merge(local.api_config, {
+              API_HOST = "oclapi2"
+              API_PORT = 80
+            })
             content {
               name = env.key
               value = env.value
@@ -817,7 +850,10 @@ resource "kubernetes_deployment" "oclcelerybulkimport0-1" {
           }
 
           dynamic "env" {
-            for_each = local.api_config
+            for_each = merge(local.api_config, {
+              API_HOST = "oclapi2"
+              API_PORT = 80
+            })
             content {
               name = env.key
               value = env.value
@@ -872,7 +908,10 @@ resource "kubernetes_deployment" "oclcelerybulkimport2-3" {
           }
 
           dynamic "env" {
-            for_each = local.api_config
+            for_each = merge(local.api_config, {
+              API_HOST = "oclapi2"
+              API_PORT = 80
+            })
             content {
               name = env.key
               value = env.value
@@ -930,7 +969,7 @@ resource "kubernetes_deployment" "oclweb2" {
 
           env {
             name = "API_URL"
-            value = "http://${azurerm_public_ip.ocl-test-api.domain_name_label}.eastus.cloudapp.azure.com"
+            value = "https://api.test.who.openconceptlab.org"
           }
 
           dynamic "env" {
@@ -1002,69 +1041,90 @@ resource "azurerm_role_assignment" "ocl-test-exports-role" {
   principal_id         = azurerm_user_assigned_identity.ocl-test-exports-user.principal_id
 }
 
-resource "kubernetes_ingress" "ocl-gateway" {
+resource "kubernetes_ingress_v1" "ocl-gateway" {
   metadata {
     name = "ocl-gateway"
 
     annotations = {
-      "kubernetes.io/ingress.class" = "azure/application-gateway"
-      "cert-manager.io/cluster-issuer" = "letsencrypt-staging"
+      #"kubernetes.io/ingress.class" = "azure/application-gateway"
+      "cert-manager.io/cluster-issuer" = "letsencrypt-production"
       "cert-manager.io/acme-challenge-type" = "http01"
     }
   }
 
   spec {
+    ingress_class_name = "azure-application-gateway"
     rule {
-      host = "api.who.openconceptlab.org"
+      host = "api.test.who.openconceptlab.org"
       http {
         path {
+          path = "/*"
           backend {
-            service_name = kubernetes_service.oclapi2.metadata.name
-            service_port = kubernetes_service.oclapi2.spec.port.port
+            service {
+              name = kubernetes_service.oclapi2.metadata[0].name
+              port {
+                number = kubernetes_service.oclapi2.spec[0].port[0].port
+              }
+            }
           }
         }
       }
     }
 
     rule {
-      host = "app.who.openconceptlab.org"
+      host = "app.test.who.openconceptlab.org"
       http {
         path {
+          path = "/*"
           backend {
-            service_name = kubernetes_service.oclweb2.metadata.name
-            service_port = kubernetes_service.oclweb2.spec.port.port
+            service {
+              name = kubernetes_service.oclweb2.metadata[0].name
+              port {
+                number = kubernetes_service.oclweb2.spec[0].port[0].port
+              }
+            }
           }
         }
       }
     }
 
     rule {
-      host = "flower.who.openconceptlab.org"
+      host = "flower.test.who.openconceptlab.org"
       http {
         path {
+          path = "/*"
           backend {
-            service_name = kubernetes_service.oclflower.metadata.name
-            service_port = kubernetes_service.oclflower.spec.port.port
+            service {
+              name = kubernetes_service.oclflower.metadata[0].name
+              port {
+                number = kubernetes_service.oclflower.spec[0].port[0].port
+              }
+            }
           }
         }
       }
     }
 
     rule {
-      host = "fhir.who.openconceptlab.org"
+      host = "fhir.test.who.openconceptlab.org"
       http {
         path {
+          path = "/*"
           backend {
-            service_name = kubernetes_service.oclfhir.metadata.name
-            service_port = kubernetes_service.oclfhir.spec.port.port
+            service {
+              name = kubernetes_service.oclfhir.metadata[0].name
+              port {
+                number = kubernetes_service.oclfhir.spec[0].port[0].port
+              }
+            }
           }
         }
       }
     }
 
     tls {
-      hosts = ["api.who.openconceptlab.org", "app.who.openconceptlab.org", "fhir.who.openconceptlab.org",
-        "flower.who.openconceptlab.org"]
+      hosts = ["api.test.who.openconceptlab.org", "app.test.who.openconceptlab.org", "fhir.test.who.openconceptlab.org",
+        "flower.test.who.openconceptlab.org"]
       secret_name = "letsencrypt-secret"
     }
   }
