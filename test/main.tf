@@ -67,6 +67,12 @@ locals {
     EMAIL_PORT = "587"
     EMAIL_USE_TLS = "true"
 
+    EXPORT_SERVICE = "core.services.storages.cloud.azure.BlobStorage"
+
+    AZURE_STORAGE_ACCOUNT_NAME = azurerm_storage_account.ocl-test-account.name
+    AZURE_STORAGE_CONTAINER_NAME = azurerm_storage_container.ocl-test-exports.name
+    AZURE_STORAGE_CONNECTION_STRING = azurerm_storage_account.ocl-test-account.primary_connection_string
+
     #OIDC_SERVER_URL = "https://sso.openconceptlab.org"
     #OIDC_REALM = "ocl"
     FHIR_SUBDOMAIN = "fhir"
@@ -414,6 +420,13 @@ resource "kubernetes_deployment" "oclfhir" {
               memory = "512Mi"
             }
           }
+
+          liveness_probe {
+            http_get {
+              path = "/version"
+              port = 8000
+            }
+          }
         }
       }
     }
@@ -483,7 +496,9 @@ resource "kubernetes_deployment" "oclflower" {
           }
 
           dynamic "env" {
-            for_each = local.api_config
+            for_each = merge(local.api_config, {
+              FLOWER_PORT = "5555"
+            })
             content {
               name = env.key
               value = env.value
@@ -494,6 +509,13 @@ resource "kubernetes_deployment" "oclflower" {
             requests = {
               cpu    = "0.1"
               memory = "512Mi"
+            }
+          }
+
+          liveness_probe {
+            http_get {
+              path = "/healthcheck"
+              port = 5555
             }
           }
         }
@@ -954,7 +976,7 @@ resource "kubernetes_deployment" "oclweb2" {
       spec {
         subdomain = "web"
         container {
-          image = "docker.io/openconceptlab/oclweb2:production"
+          image = "docker.io/openconceptlab/oclweb2:qa"
           name  = "oclweb2"
           image_pull_policy = "Always"
 
