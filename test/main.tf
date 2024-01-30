@@ -300,6 +300,7 @@ resource "kubernetes_service" "oclapi2" {
     name = "oclapi2"
     annotations = {
       "service.beta.kubernetes.io/azure-load-balancer-resource-group" = azurerm_resource_group.ocl-test.name
+      "service.beta.kubernetes.io/azure-load-balancer-internal" = "true"
     }
   }
   spec {
@@ -385,6 +386,7 @@ resource "kubernetes_service" "oclfhir" {
     name = "oclfhir"
     annotations = {
       "service.beta.kubernetes.io/azure-load-balancer-resource-group" = azurerm_resource_group.ocl-test.name
+      "service.beta.kubernetes.io/azure-load-balancer-internal" = "true"
     }
   }
   spec {
@@ -473,6 +475,7 @@ resource "kubernetes_service" "oclflower" {
     name = "oclflower"
     annotations = {
       "service.beta.kubernetes.io/azure-load-balancer-resource-group" = azurerm_resource_group.ocl-test.name
+      "service.beta.kubernetes.io/azure-load-balancer-internal" = "true"
     }
   }
   spec {
@@ -961,6 +964,7 @@ resource "kubernetes_service" "oclweb2" {
     name = "oclweb2"
     annotations = {
       "service.beta.kubernetes.io/azure-load-balancer-resource-group" = azurerm_resource_group.ocl-test.name
+      "service.beta.kubernetes.io/azure-load-balancer-internal" = "true"
     }
   }
   spec {
