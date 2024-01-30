@@ -36,7 +36,7 @@ provider "helm" {
 
 locals {
   api_config = merge(var.api_config, {
-    ENVIRONMENT = "production"
+    ENVIRONMENT = "test.who"
     API_BASE_URL = "https://api.test.who.openconceptlab.org"
     API_HOST = "localhost"
     API_PORT = "8000"
@@ -87,58 +87,6 @@ locals {
 resource "azurerm_resource_group" "ocl-test" {
   name     = "ocl-test"
   location = "eastus"
-}
-
-resource "azurerm_public_ip" "ocl-test" {
-  name                = "ocl-test-public-ip"
-  domain_name_label   = "openconceptlab"
-  resource_group_name = azurerm_resource_group.ocl-test.name
-  location            = azurerm_resource_group.ocl-test.location
-  allocation_method   = "Static"
-  sku = "Standard"
-
-  tags = {
-    environment = "test"
-  }
-}
-
-resource "azurerm_public_ip" "ocl-test-api" {
-  name                = "ocl-test-api-public-ip"
-  domain_name_label   = "api-openconceptlab"
-  resource_group_name = azurerm_resource_group.ocl-test.name
-  location            = azurerm_resource_group.ocl-test.location
-  allocation_method   = "Static"
-  sku = "Standard"
-
-  tags = {
-    environment = "test"
-  }
-}
-
-resource "azurerm_public_ip" "ocl-test-flower" {
-  name                = "ocl-test-flower-public-ip"
-  domain_name_label   = "flower-openconceptlab"
-  resource_group_name = azurerm_resource_group.ocl-test.name
-  location            = azurerm_resource_group.ocl-test.location
-  allocation_method   = "Static"
-  sku = "Standard"
-
-  tags = {
-    environment = "test"
-  }
-}
-
-resource "azurerm_public_ip" "ocl-test-fhir" {
-  name                = "ocl-test-fhir-public-ip"
-  domain_name_label   = "fhir-openconceptlab"
-  resource_group_name = azurerm_resource_group.ocl-test.name
-  location            = azurerm_resource_group.ocl-test.location
-  allocation_method   = "Static"
-  sku = "Standard"
-
-  tags = {
-    environment = "test"
-  }
 }
 
 resource "azurerm_log_analytics_workspace" "ocl-test" {
@@ -351,9 +299,7 @@ resource "kubernetes_service" "oclapi2" {
   metadata {
     name = "oclapi2"
     annotations = {
-      "service.beta.kubernetes.io/azure-dns-label-name" = azurerm_public_ip.ocl-test-api.domain_name_label
       "service.beta.kubernetes.io/azure-load-balancer-resource-group" = azurerm_resource_group.ocl-test.name
-      "service.beta.kubernetes.io/azure-pip-name" = azurerm_public_ip.ocl-test-api.name
     }
   }
   spec {
@@ -438,9 +384,7 @@ resource "kubernetes_service" "oclfhir" {
   metadata {
     name = "oclfhir"
     annotations = {
-      "service.beta.kubernetes.io/azure-dns-label-name" = azurerm_public_ip.ocl-test-fhir.domain_name_label
       "service.beta.kubernetes.io/azure-load-balancer-resource-group" = azurerm_resource_group.ocl-test.name
-      "service.beta.kubernetes.io/azure-pip-name" = azurerm_public_ip.ocl-test-fhir.name
     }
   }
   spec {
@@ -528,9 +472,7 @@ resource "kubernetes_service" "oclflower" {
   metadata {
     name = "oclflower"
     annotations = {
-      "service.beta.kubernetes.io/azure-dns-label-name" = azurerm_public_ip.ocl-test-flower.domain_name_label
       "service.beta.kubernetes.io/azure-load-balancer-resource-group" = azurerm_resource_group.ocl-test.name
-      "service.beta.kubernetes.io/azure-pip-name" = azurerm_public_ip.ocl-test-flower.name
     }
   }
   spec {
@@ -1018,9 +960,7 @@ resource "kubernetes_service" "oclweb2" {
   metadata {
     name = "oclweb2"
     annotations = {
-      "service.beta.kubernetes.io/azure-dns-label-name" = azurerm_public_ip.ocl-test.domain_name_label
       "service.beta.kubernetes.io/azure-load-balancer-resource-group" = azurerm_resource_group.ocl-test.name
-      "service.beta.kubernetes.io/azure-pip-name" = azurerm_public_ip.ocl-test.name
     }
   }
   spec {
