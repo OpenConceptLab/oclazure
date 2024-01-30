@@ -14,17 +14,16 @@ Environments are completely isolated from one another. They are deployed with Az
 
 Each environment consists of Azure services such as:
 1. Virtual Network
-2. Web Application Firewall
-3. Application Gateway
-4. Private Link
-5. Container Registry
-6. Kubernetes Cluster
-7. PostgreSQL Server
-8. Redis Cache
-9. Elastic Cloud Service
-10. Monitor
+2. Application Gateway
+3. Private Links for Redis and DB
+4. Container Registry
+5. Kubernetes Cluster
+6. PostgreSQL Flexible Server
+7. Redis Cache 
+8. Monitor
 
-The Kubernetes cluster orchestrates running OCL services (api, web, celery workers, flower) and Errbit.
+The Kubernetes cluster orchestrates running OCL services (api, web, celery workers, flower), Elasticsearch
+and Errbit.
 
 ## Deployments
 Deployments will be setup using Github Actions. There will be a manually triggered workflow that has a separete stage for each environment that needs to be reviewed and accepted by selected GitHub users. Each action will be pulling official OCL images from Dockerhub and pushing them to Azure Container Registry and doing deployments from ACR.
