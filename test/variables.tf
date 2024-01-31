@@ -37,3 +37,8 @@ variable "api_config" {
   description = "OCL api config"
   type = map(string)
 }
+
+variable "oclsso_config" {
+  description = "OCL sso config"
+  type = map(string)
+}

@@ -73,14 +73,25 @@ locals {
     AZURE_STORAGE_CONTAINER_NAME = azurerm_storage_container.ocl-test-exports.name
     AZURE_STORAGE_CONNECTION_STRING = azurerm_storage_account.ocl-test-account.primary_connection_string
 
-    #OIDC_SERVER_URL = "https://sso.openconceptlab.org"
-    #OIDC_REALM = "ocl"
+    OIDC_SERVER_URL = "https://sso.test.who.openconceptlab.org"
+    OIDC_REALM = "ocl"
     FHIR_SUBDOMAIN = "fhir"
   })
 
   web_config = merge(var.web_config, {
     LOGIN_REDIRECT_URL = "https://app.test.who.openconceptlab.org/"
     LOGOUT_REDIRECT_URL = "https://app.test.who.openconceptlab.org/"
+  })
+
+  sso_config = merge(var.oclsso_config, {
+    JAVA_OPTS_APPEND = "-Djgroups.dns.query=oclsso-pods.default.svc.cluster.local"
+    KC_DB = "postgres"
+    KC_DB_URL = "jdbc:postgresql://${azurerm_postgresql_flexible_server.ocl-test.fqdn}:5432/${azurerm_postgresql_flexible_server_database.ocl-test-keycloak.name}"
+    KC_DB_USERNAME = azurerm_postgresql_flexible_server.ocl-test.administrator_login
+    KC_DB_PASSWORD = azurerm_postgresql_flexible_server.ocl-test.administrator_password
+    KC_HOSTNAME = "sso.test.who.openconceptlab.org"
+    KC_PROXY = "edge"
+    KC_HTTP_ENABLED = "true"
   })
 }
 
@@ -221,6 +232,18 @@ resource "azurerm_postgresql_flexible_server_database" "ocl-test" {
   }
 }
 
+resource "azurerm_postgresql_flexible_server_database" "ocl-test-keycloak" {
+  name      = "ocl-test-keycloak"
+  server_id = azurerm_postgresql_flexible_server.ocl-test.id
+  collation = "en_US.utf8"
+  charset   = "utf8"
+
+  # prevent the possibility of accidental data loss
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 resource "azurerm_redis_cache" "ocl-test-redis" {
   name                = "ocl-test-redis"
   location            = azurerm_resource_group.ocl-test.location
@@ -236,6 +259,98 @@ resource "azurerm_redis_cache" "ocl-test-redis" {
 
   }
 }
+
+resource "kubernetes_deployment" "ocl-test-sso" {
+  metadata {
+    name = "oclsso"
+    labels = {
+      App = "oclsso"
+    }
+  }
+
+  spec {
+    replicas = 2
+    selector {
+      match_labels = {
+        App = "oclsso"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          App = "oclsso"
+        }
+      }
+      spec {
+        subdomain = "sso"
+        container {
+          image = "docker.io/openconceptlab/oclsso:production"
+          name  = "oclsso"
+
+          port {
+            container_port = 8080
+          }
+
+          port {
+            container_port = 7800
+          }
+
+          command = ["/opt/keycloak/bin/kc.sh", "start", "--cache-stack=kubernetes", "--import-realm"]
+
+          dynamic "env" {
+            for_each = local.sso_config
+            content {
+              name = env.key
+              value = env.value
+            }
+          }
+
+          resources {
+            requests = {
+              cpu    = "0.2"
+              memory = "512Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+
+resource "kubernetes_service" "ocl-test-sso" {
+  metadata {
+    name = "oclsso"
+    annotations = {
+      "service.beta.kubernetes.io/azure-load-balancer-resource-group" = azurerm_resource_group.ocl-test.name
+      "service.beta.kubernetes.io/azure-load-balancer-internal" = "true"
+    }
+  }
+  spec {
+    selector = {
+      App = kubernetes_deployment.ocl-test-sso.spec.0.template.0.metadata[0].labels.App
+    }
+    port {
+      port        = 80
+      target_port = 8080
+    }
+
+    type = "LoadBalancer"
+  }
+}
+
+resource "kubernetes_service" "ocl-test-sso-pods" {
+  metadata {
+    name = "oclsso-pods"
+  }
+  spec {
+    selector = {
+      App = kubernetes_deployment.ocl-test-sso.spec.0.template.0.metadata[0].labels.App
+    }
+    cluster_ip = "None"
+  }
+}
+
 
 resource "kubernetes_deployment" "oclapi2" {
   metadata {
@@ -1022,6 +1137,7 @@ resource "kubernetes_ingress_v1" "ocl-gateway" {
     ingress_class_name = "azure-application-gateway"
     rule {
       host = "api.test.who.openconceptlab.org"
+
       http {
         path {
           path = "/*"
@@ -1088,9 +1204,26 @@ resource "kubernetes_ingress_v1" "ocl-gateway" {
       }
     }
 
+    rule {
+      host = "sso.test.who.openconceptlab.org"
+      http {
+        path {
+          path = "/*"
+          backend {
+            service {
+              name = kubernetes_service.ocl-test-sso.metadata[0].name
+              port {
+                number = kubernetes_service.ocl-test-sso.spec[0].port[0].port
+              }
+            }
+          }
+        }
+      }
+    }
+
     tls {
       hosts = ["api.test.who.openconceptlab.org", "app.test.who.openconceptlab.org", "fhir.test.who.openconceptlab.org",
-        "flower.test.who.openconceptlab.org"]
+        "flower.test.who.openconceptlab.org", "sso.test.who.openconceptlab.org"]
       secret_name = "letsencrypt-secret"
     }
   }
