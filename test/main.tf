@@ -81,6 +81,7 @@ locals {
   web_config = merge(var.web_config, {
     LOGIN_REDIRECT_URL = "https://app.test.who.openconceptlab.org/"
     LOGOUT_REDIRECT_URL = "https://app.test.who.openconceptlab.org/"
+    API_URL = "https://api.test.who.openconceptlab.org"
   })
 
   sso_config = merge(var.oclsso_config, {
@@ -1049,13 +1050,8 @@ resource "kubernetes_deployment" "oclweb2" {
             value = "0"
           }
 
-          env {
-            name = "API_URL"
-            value = "https://api.test.who.openconceptlab.org"
-          }
-
           dynamic "env" {
-            for_each = var.web_config
+            for_each = local.web_config
             content {
               name = env.key
               value = env.value
