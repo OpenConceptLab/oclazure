@@ -1,0 +1,35 @@
+az_subscription_id = "TODO"
+az_client_id = "TODO"
+az_client_secret = "TODO"
+az_tenant_id = "TODO"
+
+db_admin_user = "TODO"
+db_admin_password = "TODO"
+
+web_config = {
+  #RECAPTCHA_SITE_KEY = "TODO"
+  #GA_ACCOUNT_ID = "TODO"
+  #HOTJAR_ID = "TODO"
+  OIDC_RP_CLIENT_ID = "TODO"
+  OIDC_RP_CLIENT_SECRET = "TODO"
+}
+
+oclsso_config = {
+  KEYCLOAK_ADMIN = "TODO"
+  KEYCLOAK_ADMIN_PASSWORD = "TODO"
+}
+
+api_config = {
+  FLOWER_USER = "TODO"
+  FLOWER_PASSWORD = "TODO"
+
+  SECRET_KEY = "TODO" # Random key for django
+  #SECRET_DSN_KEY = "TODO"
+  API_SUPERUSER_PASSWORD = "TODO"
+  API_SUPERUSER_TOKEN = "TODO"
+
+  EMAIL_HOST_USER = "TODO"
+  EMAIL_HOST_PASSWORD = "TODO"
+
+  EMAIL_NOREPLY_PASSWORD = "TODO"
+}
