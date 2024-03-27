@@ -9,11 +9,11 @@ provider "azurerm" {
 
 resource "azurerm_resource_group" "ocl" {
   name = "ocl"
-  location = "eastus"
+  location = "westeurope"
 }
 
-resource "azurerm_storage_account" "ocl_test_tfstate" {
-  name                     = "ocltesttfstate"
+resource "azurerm_storage_account" "ocl_test_terraform" {
+  name                     = "ocltestterraform"
   resource_group_name      = azurerm_resource_group.ocl.name
   location                 = azurerm_resource_group.ocl.location
   account_tier             = "Standard"
@@ -22,7 +22,7 @@ resource "azurerm_storage_account" "ocl_test_tfstate" {
 }
 
 resource "azurerm_storage_container" "ocl_test_tfstate" {
-  name                  = "ocl-test-tfstate"
-  storage_account_name  = azurerm_storage_account.ocl_test_tfstate.name
+  name                  = "ocl-test-terraform"
+  storage_account_name  = azurerm_storage_account.ocl_test_terraform.name
   container_access_type = "private"
 }
