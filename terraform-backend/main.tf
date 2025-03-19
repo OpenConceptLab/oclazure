@@ -12,8 +12,8 @@ resource "azurerm_resource_group" "ocl" {
   location = "westeurope"
 }
 
-resource "azurerm_storage_account" "ocl_test_terraform" {
-  name                     = "ocltestterraform"
+resource "azurerm_storage_account" "ocl_qa_terraform" {
+  name                     = "oclqaterraform"
   resource_group_name      = azurerm_resource_group.ocl.name
   location                 = azurerm_resource_group.ocl.location
   account_tier             = "Standard"
@@ -21,8 +21,8 @@ resource "azurerm_storage_account" "ocl_test_terraform" {
 
 }
 
-resource "azurerm_storage_container" "ocl_test_tfstate" {
-  name                  = "ocl-test-terraform"
-  storage_account_name  = azurerm_storage_account.ocl_test_terraform.name
+resource "azurerm_storage_container" "ocl_qa_tfstate" {
+  name                  = "ocl-qa-terraform"
+  storage_account_name  = azurerm_storage_account.ocl_qa_terraform.name
   container_access_type = "private"
 }

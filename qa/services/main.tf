@@ -2,7 +2,7 @@ terraform {
   backend "azurerm" {
     resource_group_name  = "ocl"
     storage_account_name = "ocltestterraform"
-    container_name       = "ocl-test-terraform"
+    container_name       = "ocl-terraform"
     key                  = "terraform-services.tfstate"
   }
 }
@@ -16,31 +16,31 @@ provider "azurerm" {
   tenant_id = var.az_tenant_id
 }
 
-data azurerm_kubernetes_cluster "ocl-test" {
-  resource_group_name = "ocl-test"
-  name = "ocl-test"
+data azurerm_kubernetes_cluster "ocl" {
+  resource_group_name = "ocl"
+  name = "ocl"
 }
 
 provider "kubernetes" {
-  host = data.azurerm_kubernetes_cluster.ocl-test.kube_config.0.host
+  host = data.azurerm_kubernetes_cluster.ocl.kube_config.0.host
 
-  client_certificate     = base64decode(data.azurerm_kubernetes_cluster.ocl-test.kube_config.0.client_certificate)
-  client_key             = base64decode(data.azurerm_kubernetes_cluster.ocl-test.kube_config.0.client_key)
-  cluster_ca_certificate = base64decode(data.azurerm_kubernetes_cluster.ocl-test.kube_config.0.cluster_ca_certificate)
+  client_certificate     = base64decode(data.azurerm_kubernetes_cluster.ocl.kube_config.0.client_certificate)
+  client_key             = base64decode(data.azurerm_kubernetes_cluster.ocl.kube_config.0.client_key)
+  cluster_ca_certificate = base64decode(data.azurerm_kubernetes_cluster.ocl.kube_config.0.cluster_ca_certificate)
 }
 
 provider "helm" {
   kubernetes {
-    host = data.azurerm_kubernetes_cluster.ocl-test.kube_config.0.host
+    host = data.azurerm_kubernetes_cluster.ocl.kube_config.0.host
 
-    client_certificate     = base64decode(data.azurerm_kubernetes_cluster.ocl-test.kube_config.0.client_certificate)
-    client_key             = base64decode(data.azurerm_kubernetes_cluster.ocl-test.kube_config.0.client_key)
-    cluster_ca_certificate = base64decode(data.azurerm_kubernetes_cluster.ocl-test.kube_config.0.cluster_ca_certificate)
+    client_certificate     = base64decode(data.azurerm_kubernetes_cluster.ocl.kube_config.0.client_certificate)
+    client_key             = base64decode(data.azurerm_kubernetes_cluster.ocl.kube_config.0.client_key)
+    cluster_ca_certificate = base64decode(data.azurerm_kubernetes_cluster.ocl.kube_config.0.cluster_ca_certificate)
   }
 }
 
-data azurerm_resource_group "ocl-test" {
-  name = "ocl-test"
+data azurerm_resource_group "ocl" {
+  name = "ocl"
 }
 
 
@@ -48,10 +48,10 @@ resource "random_password" "pass" {
   length = 20
 }
 
-resource "azurerm_postgresql_flexible_server" "ocl-test" {
-  name                   = "ocl-test-db"
-  resource_group_name    = data.azurerm_resource_group.ocl-test.name
-  location               = data.azurerm_resource_group.ocl-test.location
+resource "azurerm_postgresql_flexible_server" "ocl" {
+  name                   = "ocl-db"
+  resource_group_name    = data.azurerm_resource_group.ocl.name
+  location               = data.azurerm_resource_group.ocl.location
   version                = "14"
   administrator_login    = "ocladmin"
   administrator_password = random_password.pass.result
@@ -61,16 +61,16 @@ resource "azurerm_postgresql_flexible_server" "ocl-test" {
   backup_retention_days  = 7
 }
 
-#resource "azurerm_postgresql_flexible_server_firewall_rule" "ocl-test" {
+#resource "azurerm_postgresql_flexible_server_firewall_rule" "ocl" {
 #  name             = "allow"
-#  server_id        = azurerm_postgresql_flexible_server.ocl-test.id
+#  server_id        = azurerm_postgresql_flexible_server.ocl.id
 #  start_ip_address = "0.0.0.0"
 #  end_ip_address   = "255.255.255.255"
 #}
 
-resource "azurerm_postgresql_flexible_server_database" "ocl-test" {
-  name      = "ocl-test-db"
-  server_id = azurerm_postgresql_flexible_server.ocl-test.id
+resource "azurerm_postgresql_flexible_server_database" "ocl" {
+  name      = "ocl-db"
+  server_id = azurerm_postgresql_flexible_server.ocl.id
   collation = "en_US.utf8"
   charset   = "utf8"
 
@@ -80,9 +80,9 @@ resource "azurerm_postgresql_flexible_server_database" "ocl-test" {
   }
 }
 
-resource "azurerm_postgresql_flexible_server_database" "ocl-test-keycloak" {
-  name      = "ocl-test-keycloak"
-  server_id = azurerm_postgresql_flexible_server.ocl-test.id
+resource "azurerm_postgresql_flexible_server_database" "ocl-keycloak" {
+  name      = "ocl-keycloak"
+  server_id = azurerm_postgresql_flexible_server.ocl.id
   collation = "en_US.utf8"
   charset   = "utf8"
 
@@ -92,10 +92,10 @@ resource "azurerm_postgresql_flexible_server_database" "ocl-test-keycloak" {
   }
 }
 
-resource "azurerm_redis_cache" "ocl-test-redis" {
-  name                = "ocl-test-redis"
-  location            = data.azurerm_resource_group.ocl-test.location
-  resource_group_name = data.azurerm_resource_group.ocl-test.name
+resource "azurerm_redis_cache" "ocl-redis" {
+  name                = "ocl-redis"
+  location            = data.azurerm_resource_group.ocl.location
+  resource_group_name = data.azurerm_resource_group.ocl.name
   capacity            = 2
   family              = "C"
   sku_name            = "Basic"
@@ -116,11 +116,11 @@ locals {
     API_PORT = "8000"
     API_INTERNAL_BASE_URL = "http://localhost:8000"
 
-    DB_HOST = azurerm_postgresql_flexible_server.ocl-test.fqdn
+    DB_HOST = azurerm_postgresql_flexible_server.ocl.fqdn
     DB_PORT = "5432"
-    DB_USER = azurerm_postgresql_flexible_server.ocl-test.administrator_login
-    DB_PASSWORD = azurerm_postgresql_flexible_server.ocl-test.administrator_password
-    DB_NAME = azurerm_postgresql_flexible_server_database.ocl-test.name
+    DB_USER = azurerm_postgresql_flexible_server.ocl.administrator_login
+    DB_PASSWORD = azurerm_postgresql_flexible_server.ocl.administrator_password
+    DB_NAME = azurerm_postgresql_flexible_server_database.ocl.name
 
     ES_HOSTS = "elasticsearch-es-http.elastic-system:9200"
     ES_SCHEME = "https"
@@ -128,9 +128,9 @@ locals {
     ES_USER = "elastic"
     ES_PASSWORD = data.kubernetes_secret.es_password.data["elastic"]
 
-    REDIS_HOST = azurerm_redis_cache.ocl-test-redis.hostname
-    REDIS_PORT = azurerm_redis_cache.ocl-test-redis.port
-    REDIS_PASSWORD = azurerm_redis_cache.ocl-test-redis.primary_access_key
+    REDIS_HOST = azurerm_redis_cache.ocl-redis.hostname
+    REDIS_PORT = azurerm_redis_cache.ocl-redis.port
+    REDIS_PASSWORD = azurerm_redis_cache.ocl-redis.primary_access_key
 
     FLOWER_HOST = "flower"
     FLOWER_PORT = "80"
@@ -143,9 +143,9 @@ locals {
 
     EXPORT_SERVICE = "core.services.storages.cloud.azure.BlobStorage"
 
-    AZURE_STORAGE_ACCOUNT_NAME = azurerm_storage_account.ocl-test-account.name
-    AZURE_STORAGE_CONTAINER_NAME = azurerm_storage_container.ocl-test-exports.name
-    AZURE_STORAGE_CONNECTION_STRING = azurerm_storage_account.ocl-test-account.primary_connection_string
+    AZURE_STORAGE_ACCOUNT_NAME = azurerm_storage_account.ocl-account.name
+    AZURE_STORAGE_CONTAINER_NAME = azurerm_storage_container.ocl-exports.name
+    AZURE_STORAGE_CONNECTION_STRING = azurerm_storage_account.ocl-account.primary_connection_string
 
     OIDC_SERVER_URL = "https://sso.test.who.openconceptlab.org"
     OIDC_REALM = "ocl"
@@ -161,9 +161,9 @@ locals {
   sso_config = merge(var.oclsso_config, {
     JAVA_OPTS_APPEND = "-Djgroups.dns.query=oclsso-pods.default.svc.cluster.local"
     KC_DB = "postgres"
-    KC_DB_URL = "jdbc:postgresql://${azurerm_postgresql_flexible_server.ocl-test.fqdn}:5432/${azurerm_postgresql_flexible_server_database.ocl-test-keycloak.name}"
-    KC_DB_USERNAME = azurerm_postgresql_flexible_server.ocl-test.administrator_login
-    KC_DB_PASSWORD = azurerm_postgresql_flexible_server.ocl-test.administrator_password
+    KC_DB_URL = "jdbc:postgresql://${azurerm_postgresql_flexible_server.ocl.fqdn}:5432/${azurerm_postgresql_flexible_server_database.ocl-keycloak.name}"
+    KC_DB_USERNAME = azurerm_postgresql_flexible_server.ocl.administrator_login
+    KC_DB_PASSWORD = azurerm_postgresql_flexible_server.ocl.administrator_password
     KC_HOSTNAME = "sso.test.who.openconceptlab.org"
     KC_PROXY = "edge"
     KC_HTTP_ENABLED = "true"
@@ -225,14 +225,14 @@ resource "kubernetes_manifest" "cert-manager" {
   ]
 }
 
-#resource "azurerm_postgresql_flexible_server_firewall_rule" "ocl-test" {
+#resource "azurerm_postgresql_flexible_server_firewall_rule" "ocl" {
 #  name             = "allow"
-#  server_id        = azurerm_postgresql_flexible_server.ocl-test.id
+#  server_id        = azurerm_postgresql_flexible_server.ocl.id
 #  start_ip_address = "0.0.0.0"
 #  end_ip_address   = "255.255.255.255"
 #}
 
-resource "kubernetes_deployment" "ocl-test-sso" {
+resource "kubernetes_deployment" "ocl-sso" {
   metadata {
     name = "oclsso"
     labels = {
@@ -290,17 +290,17 @@ resource "kubernetes_deployment" "ocl-test-sso" {
 }
 
 
-resource "kubernetes_service" "ocl-test-sso" {
+resource "kubernetes_service" "ocl-sso" {
   metadata {
     name = "oclsso"
     annotations = {
-      "service.beta.kubernetes.io/azure-load-balancer-resource-group" = data.azurerm_resource_group.ocl-test.name
+      "service.beta.kubernetes.io/azure-load-balancer-resource-group" = data.azurerm_resource_group.ocl.name
       "service.beta.kubernetes.io/azure-load-balancer-internal" = "true"
     }
   }
   spec {
     selector = {
-      App = kubernetes_deployment.ocl-test-sso.spec.0.template.0.metadata[0].labels.App
+      App = kubernetes_deployment.ocl-sso.spec.0.template.0.metadata[0].labels.App
     }
     port {
       port        = 80
@@ -311,13 +311,13 @@ resource "kubernetes_service" "ocl-test-sso" {
   }
 }
 
-resource "kubernetes_service" "ocl-test-sso-pods" {
+resource "kubernetes_service" "ocl-sso-pods" {
   metadata {
     name = "oclsso-pods"
   }
   spec {
     selector = {
-      App = kubernetes_deployment.ocl-test-sso.spec.0.template.0.metadata[0].labels.App
+      App = kubernetes_deployment.ocl-sso.spec.0.template.0.metadata[0].labels.App
     }
     cluster_ip = "None"
   }
@@ -386,7 +386,7 @@ resource "kubernetes_service" "oclapi2" {
   metadata {
     name = "oclapi2"
     annotations = {
-      "service.beta.kubernetes.io/azure-load-balancer-resource-group" = data.azurerm_resource_group.ocl-test.name
+      "service.beta.kubernetes.io/azure-load-balancer-resource-group" = data.azurerm_resource_group.ocl.name
       "service.beta.kubernetes.io/azure-load-balancer-internal" = "true"
     }
   }
@@ -472,7 +472,7 @@ resource "kubernetes_service" "oclfhir" {
   metadata {
     name = "oclfhir"
     annotations = {
-      "service.beta.kubernetes.io/azure-load-balancer-resource-group" = data.azurerm_resource_group.ocl-test.name
+      "service.beta.kubernetes.io/azure-load-balancer-resource-group" = data.azurerm_resource_group.ocl.name
       "service.beta.kubernetes.io/azure-load-balancer-internal" = "true"
     }
   }
@@ -561,7 +561,7 @@ resource "kubernetes_service" "oclflower" {
   metadata {
     name = "oclflower"
     annotations = {
-      "service.beta.kubernetes.io/azure-load-balancer-resource-group" = data.azurerm_resource_group.ocl-test.name
+      "service.beta.kubernetes.io/azure-load-balancer-resource-group" = data.azurerm_resource_group.ocl.name
       "service.beta.kubernetes.io/azure-load-balancer-internal" = "true"
     }
   }
@@ -1045,7 +1045,7 @@ resource "kubernetes_service" "oclweb2" {
   metadata {
     name = "oclweb2"
     annotations = {
-      "service.beta.kubernetes.io/azure-load-balancer-resource-group" = data.azurerm_resource_group.ocl-test.name
+      "service.beta.kubernetes.io/azure-load-balancer-resource-group" = data.azurerm_resource_group.ocl.name
       "service.beta.kubernetes.io/azure-load-balancer-internal" = "true"
     }
   }
@@ -1063,30 +1063,30 @@ resource "kubernetes_service" "oclweb2" {
   }
 }
 
-resource "azurerm_storage_account" "ocl-test-account" {
+resource "azurerm_storage_account" "ocl-account" {
   name                     = "ocltestaccount"
-  resource_group_name      = data.azurerm_resource_group.ocl-test.name
-  location                 = data.azurerm_resource_group.ocl-test.location
+  resource_group_name      = data.azurerm_resource_group.ocl.name
+  location                 = data.azurerm_resource_group.ocl.location
   account_tier             = "Standard"
   account_replication_type = "LRS"
 }
 
-resource "azurerm_storage_container" "ocl-test-exports" {
-  name                  = "ocl-test-exports"
-  storage_account_name  = azurerm_storage_account.ocl-test-account.name
+resource "azurerm_storage_container" "ocl-exports" {
+  name                  = "ocl-exports"
+  storage_account_name  = azurerm_storage_account.ocl-account.name
   container_access_type = "blob"
 }
 
-resource "azurerm_user_assigned_identity" "ocl-test-exports-user" {
-  location            = data.azurerm_resource_group.ocl-test.location
-  name                = "ocl-test-exports"
-  resource_group_name = data.azurerm_resource_group.ocl-test.name
+resource "azurerm_user_assigned_identity" "ocl-exports-user" {
+  location            = data.azurerm_resource_group.ocl.location
+  name                = "ocl-exports"
+  resource_group_name = data.azurerm_resource_group.ocl.name
 }
 
-resource "azurerm_role_assignment" "ocl-test-exports-role" {
-  scope                = azurerm_storage_account.ocl-test-account.id
+resource "azurerm_role_assignment" "ocl-exports-role" {
+  scope                = azurerm_storage_account.ocl-account.id
   role_definition_name = "Storage Blob Data Owner"
-  principal_id         = azurerm_user_assigned_identity.ocl-test-exports-user.principal_id
+  principal_id         = azurerm_user_assigned_identity.ocl-exports-user.principal_id
 }
 
 resource "kubernetes_ingress_v1" "ocl-gateway" {
@@ -1178,9 +1178,9 @@ resource "kubernetes_ingress_v1" "ocl-gateway" {
           path = "/*"
           backend {
             service {
-              name = kubernetes_service.ocl-test-sso.metadata[0].name
+              name = kubernetes_service.ocl-sso.metadata[0].name
               port {
-                number = kubernetes_service.ocl-test-sso.spec[0].port[0].port
+                number = kubernetes_service.ocl-sso.spec[0].port[0].port
               }
             }
           }
