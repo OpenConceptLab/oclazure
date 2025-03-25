@@ -18,6 +18,7 @@ provider "azurerm" {
 
 locals {
   environment = "qa"
+  domain = "who.openconceptlab.org"
 }
 
 resource "azurerm_resource_group" "main" {
@@ -47,8 +48,8 @@ resource "azurerm_subnet" "aks" {
   address_prefixes     = ["10.1.1.0/24"]
 }
 
-resource "azurerm_subnet" "appgw" {
-  name                 = "ocl-${local.environment}-appgw-subnet"
+resource "azurerm_subnet" "endpoint" {
+  name                 = "ocl-${local.environment}-endpoint-subnet"
   virtual_network_name = azurerm_virtual_network.main.name
   resource_group_name  = azurerm_resource_group.main.name
   address_prefixes     = ["10.1.2.0/24"]
@@ -74,6 +75,12 @@ resource "azurerm_kubernetes_cluster" "main" {
     node_count = 3
     vm_size    = "Standard_D11_v2"
     vnet_subnet_id = azurerm_subnet.aks.id
+
+    upgrade_settings {
+      drain_timeout_in_minutes      = 0
+      max_surge                     = "10%"
+      node_soak_duration_in_minutes = 0
+    }
   }
 
   network_profile {
@@ -115,22 +122,6 @@ resource "azurerm_role_assignment" "acr" {
   skip_service_principal_aad_check = true
 }
 
-resource "azurerm_cdn_frontdoor_profile" "main" {
-  name                = "ocl-${local.environment}-frontdoor"
-  resource_group_name = azurerm_resource_group.main.name
-  sku_name            = "Premium_AzureFrontDoor"
-}
-
-resource "azurerm_cdn_frontdoor_custom_domain" "main" {
-  name                     = "ocl-${local.environment}-frontdoor-domain"
-  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.main.id
-  host_name                = "qa.who.openconceptlab.org"
-
-  tls {
-    certificate_type    = "ManagedCertificate"
-  }
-}
-
 resource "random_password" "postgresql" {
   length = 20
 }
@@ -153,7 +144,7 @@ resource "azurerm_subnet" "db" {
 }
 
 resource "azurerm_private_dns_zone" "db" {
-  name                = "${local.environment}.postgres.database.azure.com"
+  name                = "privatelink.postgres.database.azure.com"
   resource_group_name = azurerm_resource_group.main.name
 }
 
@@ -168,7 +159,7 @@ resource "azurerm_private_endpoint" "db" {
   name                = "ocl-${local.environment}-db-private-endpoint"
   location            = azurerm_resource_group.main.location
   resource_group_name = azurerm_resource_group.main.name
-  subnet_id           = azurerm_subnet.db.id
+  subnet_id           = azurerm_subnet.endpoint.id
 
   private_service_connection {
     name = "ocl-${local.environment}-db-connection"
@@ -213,18 +204,6 @@ resource "azurerm_postgresql_flexible_server_database" "ocl" {
   }
 }
 
-resource "azurerm_postgresql_flexible_server_database" "keycloak" {
-  name      = "ocl-keycloak"
-  server_id = azurerm_postgresql_flexible_server.main.id
-  collation = "en_US.utf8"
-  charset   = "utf8"
-
-  # prevent the possibility of accidental data loss
-  lifecycle {
-    #prevent_destroy = true
-  }
-}
-
 resource "azurerm_redis_cache" "main" {
   name                = "ocl-${local.environment}-redis"
   location            = azurerm_resource_group.main.location
@@ -250,7 +229,7 @@ resource "azurerm_subnet" "redis" {
 }
 
 resource "azurerm_private_dns_zone" "redis" {
-  name                = "${local.environment}.redis.cache.windows.net"
+  name                = "privatelink.redis.cache.windows.net"
   resource_group_name = azurerm_resource_group.main.name
 }
 
@@ -263,9 +242,9 @@ resource "azurerm_private_dns_zone_virtual_network_link" "redis" {
 
 resource "azurerm_private_endpoint" "redis" {
   name                = "ocl-${local.environment}-redis-private-endpoint"
-  location            = azurerm_redis_cache.main.location
+  location            = azurerm_resource_group.main.location
   resource_group_name = azurerm_resource_group.main.name
-  subnet_id           = azurerm_subnet.redis.id
+  subnet_id           = azurerm_subnet.endpoint.id
 
   private_dns_zone_group {
     name                 = "ocl-${local.environment}-redis-dns-group"
@@ -292,6 +271,20 @@ resource "azurerm_storage_container" "exports" {
   name                  = "ocl-${local.environment}-exports"
   storage_account_id = azurerm_storage_account.main.id
   container_access_type = "blob"
+}
+
+resource "azurerm_private_endpoint" "storage" {
+  name                = "ocl-${local.environment}-storage-endpoint"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  subnet_id           = azurerm_subnet.endpoint.id
+
+  private_service_connection {
+    name                           = "ocl-${local.environment}-storage-connection"
+    private_connection_resource_id = azurerm_storage_account.main.id
+    subresource_names              = ["blob"]
+    is_manual_connection           = false
+  }
 }
 
 resource "azurerm_user_assigned_identity" "exports" {
@@ -341,23 +334,233 @@ resource "time_sleep" "wait_30_seconds" {
 }
 
 
-#resource "kubernetes_manifest" "elasticsearch" {
-#  manifest = yamldecode(file("elasticsearch.yaml"))
-#
-#  provisioner "local-exec" {
-#    command = "sleep 60"
-#  }
-#
-#  depends_on = [helm_release.elastic, time_sleep.wait_30_seconds]
-#}
+resource "kubernetes_manifest" "elasticsearch" {
+  manifest = yamldecode(file("elasticsearch.yaml"))
 
-#data "kubernetes_secret" "es_password" {
-#  metadata {
-#    name = "elasticsearch-es-elastic-user"
-#    namespace = "elastic-system"
-#  }
+  depends_on = [helm_release.elastic, time_sleep.wait_30_seconds]
+}
 
-#  depends_on = [
-#    kubernetes_manifest.elasticsearch
-#  ]
-#}
+data "kubernetes_secret" "es_password" {
+  metadata {
+    name = "elasticsearch-es-elastic-user"
+    namespace = "elastic-system"
+  }
+
+  depends_on = [
+    kubernetes_manifest.elasticsearch
+  ]
+}
+
+# Internal ingress-nginx for Azure Front Door support
+resource "helm_release" "ingress" {
+  name       = "ingress-nginx"
+  repository = "https://kubernetes.github.io/ingress-nginx"
+  chart      = "ingress-nginx"
+  namespace         = "ingress-nginx"
+  create_namespace  = true
+  force_update = true
+  dependency_update = true #helm repo update command
+  set {
+    name  = "controller.replicaCount"
+    value = "2"
+  }
+  set {
+    name = "controller.service.loadBalancerIP"
+    value = "10.1.1.128" # Needs to be an unused IP from AKS subnet
+  }
+  set {
+    name="controller.service.externalTrafficPolicy"
+    value = "Local"
+  }
+  set {
+    name = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-load-balancer-internal"
+    value = "true"
+  }
+  set {
+    name = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-pls-create"
+    value = "true"
+  }
+  set {
+    name = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-pls-auto-approval"
+    value = var.az_subscription_id
+  }
+
+  set {
+    name = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-pls-name"
+    value = "ocl-${local.environment}-ingress-pls"
+  }
+
+  set {
+    name = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-pls-resource-group"
+    value = azurerm_resource_group.main.name
+  }
+}
+
+data "azurerm_private_link_service" "ingress" {
+  name = "ocl-${local.environment}-ingress-pls"
+  resource_group_name = azurerm_resource_group.main.name
+
+  depends_on = [helm_release.ingress]
+}
+
+resource "azurerm_cdn_frontdoor_profile" "main" {
+  name                = "ocl-${local.environment}-frontdoor"
+  resource_group_name = azurerm_resource_group.main.name
+  sku_name            = "Premium_AzureFrontDoor"
+}
+
+resource "azurerm_cdn_frontdoor_custom_domain" "main" {
+  name                     = "ocl-${local.environment}-frontdoor-domain"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.main.id
+  host_name                = "${local.environment}.${local.domain}"
+
+  tls {
+    certificate_type    = "ManagedCertificate"
+  }
+}
+
+resource "azurerm_cdn_frontdoor_custom_domain" "sso" {
+  name                     = "ocl-${local.environment}-sso-frontdoor-domain"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.main.id
+  host_name                = "sso.${local.environment}.${local.domain}"
+
+  tls {
+    certificate_type    = "ManagedCertificate"
+  }
+}
+
+resource "azurerm_cdn_frontdoor_custom_domain" "api" {
+  name                     = "ocl-${local.environment}-api-frontdoor-domain"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.main.id
+  host_name                = "api.${local.environment}.${local.domain}"
+
+  tls {
+    certificate_type    = "ManagedCertificate"
+  }
+}
+
+resource "azurerm_cdn_frontdoor_custom_domain" "fhir" {
+  name                     = "ocl-${local.environment}-fhir-frontdoor-domain"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.main.id
+  host_name                = "fhir.${local.environment}.${local.domain}"
+
+  tls {
+    certificate_type    = "ManagedCertificate"
+  }
+}
+
+resource "azurerm_cdn_frontdoor_origin_group" "main" {
+  name                     = "ocl-${local.environment}-frontdoor-origin-group"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.main.id
+
+  load_balancing {}
+}
+
+resource "azurerm_cdn_frontdoor_origin" "main" {
+  name                          = "ocl-${local.environment}-frontdoor-origin"
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.main.id
+  enabled                       = true
+
+  certificate_name_check_enabled = true
+  host_name                      = data.azurerm_private_link_service.ingress.alias
+  priority                       = 1
+  weight                         = 500
+
+  private_link {
+    request_message        = "Request access for Private Link Origin CDN Frontdoor"
+    location               = azurerm_resource_group.main.location
+    private_link_target_id = data.azurerm_private_link_service.ingress.id
+  }
+}
+
+resource "azurerm_cdn_frontdoor_endpoint" "main" {
+  name                     = "ocl-${local.environment}"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.main.id
+
+  tags = {
+    ENV = local.environment
+  }
+}
+
+resource "azurerm_cdn_frontdoor_route" "main" {
+  name                          = "ocl-${local.environment}-route"
+  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.main.id
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.main.id
+  cdn_frontdoor_origin_ids      = [azurerm_cdn_frontdoor_origin.main.id]
+  enabled                       = true
+
+  forwarding_protocol    = "HttpsOnly"
+  https_redirect_enabled = true
+  patterns_to_match      = ["/*"]
+  supported_protocols    = ["Http", "Https"]
+
+  cdn_frontdoor_custom_domain_ids = [azurerm_cdn_frontdoor_custom_domain.main.id,
+    azurerm_cdn_frontdoor_custom_domain.sso.id, azurerm_cdn_frontdoor_custom_domain.api.id,
+    azurerm_cdn_frontdoor_custom_domain.fhir.id]
+  link_to_default_domain          = false
+}
+
+# Keycloak deployment
+resource "azurerm_postgresql_flexible_server_database" "keycloak" {
+  name      = "ocl-keycloak"
+  server_id = azurerm_postgresql_flexible_server.main.id
+  collation = "en_US.utf8"
+  charset   = "utf8"
+
+  # prevent the possibility of accidental data loss
+  lifecycle {
+    #prevent_destroy = true
+  }
+}
+
+
+resource "helm_release" "keycloak" {
+  name              = "keycloak"
+  repository        = "oci://registry-1.docker.io/bitnamicharts/"
+  chart             = "keycloak"
+  namespace         = "keycloak"
+  create_namespace  = true
+  force_update      = true
+  dependency_update = true #helm repo update command
+  set {
+    name  = "replicaCount"
+    value = "2"
+  }
+  set {
+    name = "postgresql.enabled"
+    value = "false"
+  }
+  set {
+    name = "externalDatabase.host"
+    value = "ocl-qa-db.privatelink.postgres.database.azure.com"
+  }
+  set {
+    name = "externalDatabase.user"
+    value = "ocladmin"
+  }
+
+  set {
+    name = "externalDatabase.password"
+    value = random_password.postgresql.result
+  }
+
+  set {
+    name = "externalDatabase.database"
+    value = "ocl-keycloak"
+  }
+
+  set {
+    name = "externalDatabase.port"
+    value = "5432"
+  }
+
+  set {
+    name = "ingress.enabled"
+    value = "true"
+  }
+
+  set {
+    name = "ingress.hostname"
+    value = "sso.qa.who.openconceptlab.org"
+  }
+}
