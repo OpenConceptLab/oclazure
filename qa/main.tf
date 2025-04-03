@@ -20,10 +20,54 @@ locals {
   environment = "qa"
   domain = "who.openconceptlab.org"
 
+  api_config = merge(var.api_config, {
+    ENVIRONMENT = "test.who"
+    API_BASE_URL = "https://api.${local.environment}.${local.domain}"
+    API_HOST = "localhost"
+    API_PORT = "8000"
+    API_INTERNAL_BASE_URL = "http://localhost:8000"
+
+    DB_HOST = "ocl-qa-db.${azurerm_private_dns_zone.db.name}"
+    DB_PORT = "5432"
+    DB_USER = azurerm_postgresql_flexible_server.main.administrator_login
+    DB_PASSWORD = azurerm_postgresql_flexible_server.main.administrator_password
+    DB_NAME = azurerm_postgresql_flexible_server_database.ocl.name
+
+    ES_HOSTS = "elasticsearch-es-http.elastic-system:9200"
+    ES_SCHEME = "https"
+    ES_VERIFY_CERTS = "false"
+    ES_USER = "elastic"
+    ES_PASSWORD = data.kubernetes_secret.es_password.data["elastic"]
+
+    REDIS_HOST = "ocl-qa-redis.${azurerm_private_dns_zone.redis.name}"
+    REDIS_PORT = azurerm_redis_cache.main.port
+    REDIS_PASSWORD = azurerm_redis_cache.main.primary_access_key
+
+    FLOWER_HOST = "flower"
+    FLOWER_PORT = "80"
+
+    IMPORT_DEMO_DATA = "true"
+
+    EMAIL_HOST = "smtp.gmail.com"
+    EMAIL_PORT = "587"
+    EMAIL_USE_TLS = "true"
+
+    EXPORT_SERVICE = "core.services.storages.cloud.azure.BlobStorage"
+
+    AZURE_STORAGE_ACCOUNT_NAME = azurerm_storage_account.main.name
+    AZURE_STORAGE_CONTAINER_NAME = azurerm_storage_container.exports.name
+    AZURE_STORAGE_CONNECTION_STRING = "oclqa.${azurerm_private_dns_zone.storage.name}"
+
+    OIDC_SERVER_URL = "https://sso.${local.environment}.${local.domain}"
+    OIDC_REALM = "ocl"
+    FHIR_SUBDOMAIN = "fhir"
+  })
+
+
   web_config = merge(var.web_config, {
-    LOGIN_REDIRECT_URL = "https://app.qa.who.openconceptlab.org/"
-    LOGOUT_REDIRECT_URL = "https://app.qa.who.openconceptlab.org/"
-    API_URL = "https://api.qa.who.openconceptlab.org"
+    LOGIN_REDIRECT_URL = "https://${local.environment}.${local.domain}/"
+    LOGOUT_REDIRECT_URL = "https://${local.environment}.${local.domain}/"
+    API_URL = "https://api.${local.environment}.${local.domain}"
   })
 }
 
@@ -199,6 +243,12 @@ resource "azurerm_postgresql_flexible_server" "main" {
   #depends_on = [azurerm_private_dns_zone_virtual_network_link.db]
 }
 
+resource "azurerm_postgresql_flexible_server_configuration" "main" {
+  name      = "azure.extensions"
+  server_id = azurerm_postgresql_flexible_server.main.id
+  value     = "BTREE_GIN,PG_TRGM,BTREE_GIST"
+}
+
 resource "azurerm_postgresql_flexible_server_database" "ocl" {
   name      = "ocl-db"
   server_id = azurerm_postgresql_flexible_server.main.id
@@ -280,6 +330,18 @@ resource "azurerm_storage_container" "exports" {
   container_access_type = "blob"
 }
 
+resource "azurerm_private_dns_zone" "storage" {
+  name                = "privatelink.blob.core.windows.net"
+  resource_group_name = azurerm_resource_group.main.name
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "storage" {
+  name                  = "ocl-${local.environment}-storage-vnet-link"
+  private_dns_zone_name = azurerm_private_dns_zone.storage.name
+  virtual_network_id    = azurerm_virtual_network.main.id
+  resource_group_name   = azurerm_resource_group.main.name
+}
+
 resource "azurerm_private_endpoint" "storage" {
   name                = "ocl-${local.environment}-storage-endpoint"
   location            = azurerm_resource_group.main.location
@@ -291,6 +353,11 @@ resource "azurerm_private_endpoint" "storage" {
     private_connection_resource_id = azurerm_storage_account.main.id
     subresource_names              = ["blob"]
     is_manual_connection           = false
+  }
+
+  private_dns_zone_group {
+    name                 = "ocl-${local.environment}-storage-dns-group"
+    private_dns_zone_ids = [azurerm_private_dns_zone.storage.id]
   }
 }
 
@@ -477,6 +544,16 @@ resource "azurerm_cdn_frontdoor_custom_domain" "fhir" {
   }
 }
 
+resource "azurerm_cdn_frontdoor_custom_domain" "flower" {
+  name                     = "ocl-${local.environment}-flower-frontdoor-domain"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.main.id
+  host_name                = "flower.${local.environment}.${local.domain}"
+
+  tls {
+    certificate_type    = "ManagedCertificate"
+  }
+}
+
 resource "azurerm_cdn_frontdoor_origin_group" "main" {
   name                     = "ocl-${local.environment}-frontdoor-origin-group"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.main.id
@@ -524,7 +601,7 @@ resource "azurerm_cdn_frontdoor_route" "main" {
 
   cdn_frontdoor_custom_domain_ids = [azurerm_cdn_frontdoor_custom_domain.main.id,
     azurerm_cdn_frontdoor_custom_domain.sso.id, azurerm_cdn_frontdoor_custom_domain.api.id,
-    azurerm_cdn_frontdoor_custom_domain.fhir.id]
+    azurerm_cdn_frontdoor_custom_domain.fhir.id, azurerm_cdn_frontdoor_custom_domain.flower.id]
   link_to_default_domain          = false
 }
 
@@ -604,6 +681,736 @@ resource "kubernetes_namespace" "ocl" {
     }
 
     name = "ocl"
+  }
+}
+
+resource "kubernetes_deployment" "oclapi2" {
+  metadata {
+    name = "oclapi2"
+    labels = {
+      App = "oclapi2"
+    }
+  }
+
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        App = "oclapi2"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          App = "oclapi2"
+        }
+      }
+      spec {
+        subdomain = "api"
+        container {
+          image = "docker.io/openconceptlab/oclapi2:qa"
+          name  = "oclapi2"
+          image_pull_policy = "Always"
+
+          port {
+            container_port = 8000
+          }
+
+          env {
+            name = "PYTHONUNBUFFERED"
+            value = "0"
+          }
+
+          dynamic "env" {
+            for_each = local.api_config
+            content {
+              name = env.key
+              value = env.value
+            }
+          }
+
+          resources {
+            requests = {
+              cpu    = "0.2"
+              memory = "512Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+
+resource "kubernetes_service" "oclapi2" {
+  metadata {
+    name = "oclapi2"
+  }
+  spec {
+    selector = {
+      App = kubernetes_deployment.oclapi2.spec.0.template.0.metadata[0].labels.App
+    }
+    port {
+      port        = 80
+      target_port = 8000
+    }
+
+    type = "ClusterIP"
+  }
+}
+
+resource "kubernetes_ingress_v1" "oclapi" {
+  metadata {
+    name = "oclapi"
+    namespace = kubernetes_namespace.ocl.metadata.0.name
+  }
+  spec {
+    rule {
+      host = "api.${local.environment}.${local.domain}"
+      http {
+        path {
+          path = "/"
+          path_type = "Prefix"
+          backend {
+            service {
+              name = kubernetes_service.oclapi2.metadata.0.name
+              port {
+                number = kubernetes_service.oclapi2.spec.0.port.0.port
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  depends_on = [helm_release.ingress]
+}
+
+resource "kubernetes_deployment" "oclfhir" {
+  metadata {
+    name = "oclfhir"
+    labels = {
+      App = "oclfhir"
+    }
+  }
+
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        App = "oclfhir"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          App = "oclfhir"
+        }
+      }
+      spec {
+        subdomain = "fhir"
+        container {
+          image = "docker.io/openconceptlab/oclapi2:qa"
+          name  = "oclapi2"
+          image_pull_policy = "Always"
+
+          port {
+            container_port = 8000
+          }
+
+          env {
+            name = "PYTHONUNBUFFERED"
+            value = "0"
+          }
+
+          dynamic "env" {
+            for_each = local.api_config
+            content {
+              name = env.key
+              value = env.value
+            }
+          }
+
+          resources {
+            requests = {
+              cpu    = "0.2"
+              memory = "512Mi"
+            }
+          }
+
+          liveness_probe {
+            http_get {
+              path = "/version"
+              port = 8000
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "oclfhir" {
+  metadata {
+    name = "oclfhir"
+    annotations = {
+    }
+  }
+  spec {
+    selector = {
+      App = kubernetes_deployment.oclfhir.spec.0.template.0.metadata[0].labels.App
+    }
+    port {
+      port        = 80
+      target_port = 8000
+    }
+
+    type = "ClusterIP"
+  }
+}
+
+resource "kubernetes_ingress_v1" "oclfhir" {
+  metadata {
+    name = "oclfhir"
+    namespace = kubernetes_namespace.ocl.metadata.0.name
+  }
+  spec {
+    rule {
+      host = "fhir.${local.environment}.${local.domain}"
+      http {
+        path {
+          path = "/"
+          path_type = "Prefix"
+          backend {
+            service {
+              name = kubernetes_service.oclfhir.metadata.0.name
+              port {
+                number = kubernetes_service.oclfhir.spec.0.port.0.port
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  depends_on = [helm_release.ingress]
+}
+
+resource "kubernetes_deployment" "oclflower" {
+  metadata {
+    name = "oclflower"
+    labels = {
+      App = "oclflower"
+    }
+  }
+
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        App = "oclflower"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          App = "oclflower"
+        }
+      }
+      spec {
+        subdomain = "flower"
+        container {
+          image = "docker.io/openconceptlab/oclapi2:qa"
+          name  = "oclflower"
+          image_pull_policy = "Always"
+
+          command = ["bash","-c","./start_flower.sh"]
+
+          port {
+            container_port = 5555
+          }
+
+          env {
+            name = "PYTHONUNBUFFERED"
+            value = "0"
+          }
+
+          dynamic "env" {
+            for_each = merge(local.api_config, {
+              FLOWER_PORT = "5555"
+            })
+            content {
+              name = env.key
+              value = env.value
+            }
+          }
+
+          resources {
+            requests = {
+              cpu    = "0.1"
+              memory = "512Mi"
+            }
+          }
+
+          liveness_probe {
+            http_get {
+              path = "/healthcheck"
+              port = 5555
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "oclflower" {
+  metadata {
+    name = "oclflower"
+  }
+  spec {
+    selector = {
+      App = kubernetes_deployment.oclflower.spec.0.template.0.metadata[0].labels.App
+    }
+    port {
+      port        = 80
+      target_port = 5555
+    }
+
+    type = "ClusterIP"
+  }
+}
+
+resource "kubernetes_ingress_v1" "oclflower" {
+  metadata {
+    name = "oclflower"
+    namespace = kubernetes_namespace.ocl.metadata.0.name
+  }
+  spec {
+    rule {
+      host = "flower.${local.environment}.${local.domain}"
+      http {
+        path {
+          path = "/"
+          path_type = "Prefix"
+          backend {
+            service {
+              name = kubernetes_service.oclflower.metadata.0.name
+              port {
+                number = kubernetes_service.oclflower.spec.0.port.0.port
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  depends_on = [helm_release.ingress]
+}
+
+resource "kubernetes_deployment" "oclcelery" {
+  metadata {
+    name = "oclcelery"
+    labels = {
+      App = "oclcelery"
+    }
+  }
+
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        App = "oclcelery"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          App = "oclcelery"
+        }
+      }
+      spec {
+        subdomain = "celery"
+        container {
+          image = "docker.io/openconceptlab/oclapi2:qa"
+          name  = "oclcelery"
+          image_pull_policy = "Always"
+
+          command = ["bash", "-c", "CELERY_WORKER_NAME=default ./start_celery_worker.sh -P prefork -Q default -c 2"]
+
+          env {
+            name = "PYTHONUNBUFFERED"
+            value = "0"
+          }
+
+          dynamic "env" {
+            for_each = merge(local.api_config, {
+              API_HOST = "oclapi2"
+              API_PORT = 80
+            })
+            content {
+              name = env.key
+              value = env.value
+            }
+          }
+
+          resources {
+            requests = {
+              cpu    = "0.2"
+              memory = "512Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_deployment" "oclcelerybeat" {
+  metadata {
+    name = "oclcelerybeat"
+    labels = {
+      App = "oclcelerybeat"
+    }
+  }
+
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        App = "oclcelerybeat"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          App = "oclcelerybeat"
+        }
+      }
+      spec {
+        subdomain = "celerybeat"
+        container {
+          image = "docker.io/openconceptlab/oclapi2:qa"
+          name  = "oclcelerybeat"
+          image_pull_policy = "Always"
+
+          command = ["bash", "-c", "./start_celery_beat.sh"]
+
+          env {
+            name = "PYTHONUNBUFFERED"
+            value = "0"
+          }
+
+          dynamic "env" {
+            for_each = merge(local.api_config, {
+              API_HOST = "oclapi2"
+              API_PORT = 80
+            })
+            content {
+              name = env.key
+              value = env.value
+            }
+          }
+
+          resources {
+            requests = {
+              cpu    = "0.2"
+              memory = "128Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_deployment" "oclceleryindexing" {
+  metadata {
+    name = "oclceleryindexing"
+    labels = {
+      App = "oclceleryindexing"
+    }
+  }
+
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        App = "oclceleryindexing"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          App = "oclceleryindexing"
+        }
+      }
+      spec {
+        subdomain = "celeryindexing"
+        container {
+          image = "docker.io/openconceptlab/oclapi2:qa"
+          name  = "oclceleryindexing"
+          image_pull_policy = "Always"
+
+          command = ["bash", "-c", "CELERY_WORKER_NAME=indexing ./start_celery_worker.sh -P prefork -Q indexing -c 5"]
+
+          env {
+            name = "PYTHONUNBUFFERED"
+            value = "0"
+          }
+
+          dynamic "env" {
+            for_each = merge(local.api_config, {
+              API_HOST = "oclapi2"
+              API_PORT = 80
+            })
+            content {
+              name = env.key
+              value = env.value
+            }
+          }
+
+          resources {
+            requests = {
+              cpu    = "0.2"
+              memory = "1024Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_deployment" "oclceleryconcurrent" {
+  metadata {
+    name = "oclceleryconcurrent"
+    labels = {
+      App = "oclceleryconcurrent"
+    }
+  }
+
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        App = "oclceleryconcurrent"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          App = "oclceleryconcurrent"
+        }
+      }
+      spec {
+        subdomain = "celeryconcurrent"
+        container {
+          image = "docker.io/openconceptlab/oclapi2:qa"
+          name  = "oclceleryconcurrent"
+          image_pull_policy = "Always"
+
+          command = ["bash", "-c", "CELERY_WORKER_NAME=concurrent ./start_celery_worker.sh -P prefork -Q concurrent -c 5"]
+
+          env {
+            name = "PYTHONUNBUFFERED"
+            value = "0"
+          }
+
+          dynamic "env" {
+            for_each = merge(local.api_config, {
+              API_HOST = "oclapi2"
+              API_PORT = 80
+            })
+            content {
+              name = env.key
+              value = env.value
+            }
+          }
+
+          resources {
+            requests = {
+              cpu    = "0.2"
+              memory = "1024Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_deployment" "oclcelerybulkimportroot" {
+  metadata {
+    name = "oclcelerybulkimportroot"
+    labels = {
+      App = "oclcelerybulkimportroot"
+    }
+  }
+
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        App = "oclcelerybulkimportroot"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          App = "oclcelerybulkimportroot"
+        }
+      }
+      spec {
+        subdomain = "celerybulkimportroot"
+        container {
+          image = "docker.io/openconceptlab/oclapi2:qa"
+          name  = "oclcelerybulkimportroot"
+          image_pull_policy = "Always"
+
+          command = ["bash", "-c", "CELERY_WORKER_NAME=bulk_import_root ./start_celery_worker.sh -Q bulk_import_root -c 1"]
+
+          env {
+            name = "PYTHONUNBUFFERED"
+            value = "0"
+          }
+
+          dynamic "env" {
+            for_each = merge(local.api_config, {
+              API_HOST = "oclapi2"
+              API_PORT = 80
+            })
+            content {
+              name = env.key
+              value = env.value
+            }
+          }
+
+          resources {
+            requests = {
+              cpu    = "0.2"
+              memory = "2048Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_deployment" "oclcelerybulkimport0-1" {
+  metadata {
+    name = "oclcelerybulkimport0-1"
+    labels = {
+      App = "oclcelerybulkimport0-1"
+    }
+  }
+
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        App = "oclcelerybulkimport0-1"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          App = "oclcelerybulkimport0-1"
+        }
+      }
+      spec {
+        subdomain = "celerybulkimport0-1"
+        container {
+          image = "docker.io/openconceptlab/oclapi2:qa"
+          name  = "oclcelerybulkimport0-1"
+          image_pull_policy = "Always"
+
+          command = ["bash", "-c", "CELERY_WORKER_NAME=bulk_import_0_1 ./start_celery_worker.sh -Q bulk_import_0,bulk_import_1 -c 1"]
+
+          env {
+            name = "PYTHONUNBUFFERED"
+            value = "0"
+          }
+
+          dynamic "env" {
+            for_each = merge(local.api_config, {
+              API_HOST = "oclapi2"
+              API_PORT = 80
+            })
+            content {
+              name = env.key
+              value = env.value
+            }
+          }
+
+          resources {
+            requests = {
+              cpu    = "0.2"
+              memory = "256Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_deployment" "oclcelerybulkimport2-3" {
+  metadata {
+    name = "oclcelerybulkimport2-3"
+    labels = {
+      App = "oclcelerybulkimport2-3"
+    }
+  }
+
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        App = "oclcelerybulkimport2-3"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          App = "oclcelerybulkimport2-3"
+        }
+      }
+      spec {
+        subdomain = "celerybulkimport2-3"
+        container {
+          image = "docker.io/openconceptlab/oclapi2:qa"
+          name  = "oclcelerybulkimport2-3"
+          image_pull_policy = "Always"
+
+          command = ["bash", "-c", "CELERY_WORKER_NAME=bulk_import_2_3 ./start_celery_worker.sh -Q bulk_import_2,bulk_import_3 -c 1"]
+
+          env {
+            name = "PYTHONUNBUFFERED"
+            value = "0"
+          }
+
+          dynamic "env" {
+            for_each = merge(local.api_config, {
+              API_HOST = "oclapi2"
+              API_PORT = 80
+            })
+            content {
+              name = env.key
+              value = env.value
+            }
+          }
+
+          resources {
+            requests = {
+              cpu    = "0.2"
+              memory = "256Mi"
+            }
+          }
+        }
+      }
+    }
   }
 }
 
@@ -692,7 +1499,7 @@ resource "kubernetes_ingress_v1" "oclweb2" {
   }
   spec {
     rule {
-      host = "qa.who.openconceptlab.org"
+      host = "${local.environment}.${local.domain}"
       http {
         path {
           path = "/"
