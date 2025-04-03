@@ -19,6 +19,12 @@ provider "azurerm" {
 locals {
   environment = "qa"
   domain = "who.openconceptlab.org"
+
+  web_config = merge(var.web_config, {
+    LOGIN_REDIRECT_URL = "https://app.qa.who.openconceptlab.org/"
+    LOGOUT_REDIRECT_URL = "https://app.qa.who.openconceptlab.org/"
+    API_URL = "https://api.qa.who.openconceptlab.org"
+  })
 }
 
 resource "azurerm_resource_group" "main" {
@@ -46,6 +52,7 @@ resource "azurerm_subnet" "aks" {
   virtual_network_name = azurerm_virtual_network.main.name
   resource_group_name  = azurerm_resource_group.main.name
   address_prefixes     = ["10.1.1.0/24"]
+  private_link_service_network_policies_enabled = false
 }
 
 resource "azurerm_subnet" "endpoint" {
@@ -317,6 +324,14 @@ provider "helm" {
   }
 }
 
+provider "kubectl" {
+  host                   = azurerm_kubernetes_cluster.main.kube_config.0.host
+  cluster_ca_certificate = base64decode(azurerm_kubernetes_cluster.main.kube_config.0.cluster_ca_certificate)
+  client_key             = base64decode(azurerm_kubernetes_cluster.main.kube_config.0.client_key)
+  client_certificate     = base64decode(azurerm_kubernetes_cluster.main.kube_config.0.client_certificate)
+  load_config_file       = false
+}
+
 resource "helm_release" "elastic" {
   name       = "elastic-operator"
   repository = "https://helm.elastic.co"
@@ -327,17 +342,22 @@ resource "helm_release" "elastic" {
   dependency_update = true #helm repo update command
 }
 
-resource "time_sleep" "wait_30_seconds" {
+resource "time_sleep" "wait_for_elastic_operator" {
   depends_on = [helm_release.elastic]
 
   create_duration = "30s"
 }
 
+resource "kubectl_manifest" "elasticsearch" {
+  yaml_body = file("elasticsearch.yaml")
 
-resource "kubernetes_manifest" "elasticsearch" {
-  manifest = yamldecode(file("elasticsearch.yaml"))
+  depends_on = [helm_release.elastic, time_sleep.wait_for_elastic_operator]
+}
 
-  depends_on = [helm_release.elastic, time_sleep.wait_30_seconds]
+resource "time_sleep" "wait_for_elasticsearch" {
+  depends_on = [kubectl_manifest.elasticsearch]
+
+  create_duration = "30s"
 }
 
 data "kubernetes_secret" "es_password" {
@@ -347,7 +367,7 @@ data "kubernetes_secret" "es_password" {
   }
 
   depends_on = [
-    kubernetes_manifest.elasticsearch
+    time_sleep.wait_for_elasticsearch
   ]
 }
 
@@ -360,6 +380,14 @@ resource "helm_release" "ingress" {
   create_namespace  = true
   force_update = true
   dependency_update = true #helm repo update command
+  set {
+    name = "controller.watchIngressWithoutClass"
+    value = "true"
+  }
+  set {
+    name = "controller.ingressClassResource.default"
+    value = "true"
+  }
   set {
     name  = "controller.replicaCount"
     value = "2"
@@ -380,10 +408,10 @@ resource "helm_release" "ingress" {
     name = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-pls-create"
     value = "true"
   }
-  set {
-    name = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-pls-auto-approval"
-    value = var.az_subscription_id
-  }
+//  set {
+//    name = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-pls-auto-approval"
+//    value = var.az_subscription_id
+//  }
 
   set {
     name = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-pls-name"
@@ -489,7 +517,7 @@ resource "azurerm_cdn_frontdoor_route" "main" {
   cdn_frontdoor_origin_ids      = [azurerm_cdn_frontdoor_origin.main.id]
   enabled                       = true
 
-  forwarding_protocol    = "HttpsOnly"
+  forwarding_protocol    = "HttpOnly"
   https_redirect_enabled = true
   patterns_to_match      = ["/*"]
   supported_protocols    = ["Http", "Https"]
@@ -538,6 +566,10 @@ resource "helm_release" "keycloak" {
     name = "externalDatabase.user"
     value = "ocladmin"
   }
+  set {
+    name = "proxy"
+    value = "edge"
+  }
 
   set {
     name = "externalDatabase.password"
@@ -563,4 +595,119 @@ resource "helm_release" "keycloak" {
     name = "ingress.hostname"
     value = "sso.qa.who.openconceptlab.org"
   }
+}
+
+resource "kubernetes_namespace" "ocl" {
+  metadata {
+    annotations = {
+      name = "ocl"
+    }
+
+    name = "ocl"
+  }
+}
+
+
+resource "kubernetes_deployment" "oclweb2" {
+  metadata {
+    name   = "oclweb2"
+    namespace = kubernetes_namespace.ocl.metadata.0.name
+    labels = {
+      App = "oclweb2"
+    }
+  }
+
+  spec {
+    replicas = 1
+    selector {
+      match_labels = {
+        App = "oclweb2"
+      }
+    }
+    template {
+      metadata {
+        labels = {
+          App = "oclweb2"
+        }
+      }
+      spec {
+        subdomain = "web"
+        container {
+          image = "docker.io/openconceptlab/oclweb2:qa"
+          name  = "oclweb2"
+          image_pull_policy = "Always"
+
+          port {
+            container_port = 4000
+          }
+
+          env {
+            name = "PYTHONUNBUFFERED"
+            value = "0"
+          }
+
+          dynamic "env" {
+            for_each = local.web_config
+            content {
+              name = env.key
+              value = env.value
+            }
+          }
+
+          resources {
+            requests = {
+              cpu    = "0.2"
+              memory = "128Mi"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "oclweb2" {
+  metadata {
+    name = "oclweb2"
+    namespace = kubernetes_namespace.ocl.metadata.0.name
+  }
+  spec {
+    selector = {
+      App = kubernetes_deployment.oclweb2.spec.0.template.0.metadata[0].labels.App
+    }
+
+    port {
+      port        = 80
+      target_port = 4000
+    }
+
+    type = "ClusterIP"
+  }
+}
+
+resource "kubernetes_ingress_v1" "oclweb2" {
+  metadata {
+    name = "oclweb2"
+    namespace = kubernetes_namespace.ocl.metadata.0.name
+  }
+  spec {
+    rule {
+      host = "qa.who.openconceptlab.org"
+      http {
+        path {
+          path = "/"
+          path_type = "Prefix"
+          backend {
+            service {
+              name = kubernetes_service.oclweb2.metadata.0.name
+              port {
+                number = kubernetes_service.oclweb2.spec.0.port.0.port
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  depends_on = [helm_release.ingress]
 }
