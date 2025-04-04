@@ -56,7 +56,6 @@ locals {
 
     AZURE_STORAGE_ACCOUNT_NAME = azurerm_storage_account.main.name
     AZURE_STORAGE_CONTAINER_NAME = azurerm_storage_container.exports.name
-    AZURE_STORAGE_CONNECTION_STRING = "oclqa.${azurerm_private_dns_zone.storage.name}"
 
     OIDC_SERVER_URL = "https://sso.${local.environment}.${local.domain}"
     OIDC_REALM = "ocl"
@@ -447,48 +446,24 @@ resource "helm_release" "ingress" {
   create_namespace  = true
   force_update = true
   dependency_update = true #helm repo update command
-  set {
-    name = "controller.watchIngressWithoutClass"
-    value = "true"
-  }
-  set {
-    name = "controller.ingressClassResource.default"
-    value = "true"
-  }
-  set {
-    name  = "controller.replicaCount"
-    value = "2"
-  }
-  set {
-    name = "controller.service.loadBalancerIP"
-    value = "10.1.1.128" # Needs to be an unused IP from AKS subnet
-  }
-  set {
-    name="controller.service.externalTrafficPolicy"
-    value = "Local"
-  }
-  set {
-    name = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-load-balancer-internal"
-    value = "true"
-  }
-  set {
-    name = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-pls-create"
-    value = "true"
-  }
-//  set {
-//    name = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-pls-auto-approval"
-//    value = var.az_subscription_id
-//  }
 
-  set {
-    name = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-pls-name"
-    value = "ocl-${local.environment}-ingress-pls"
-  }
-
-  set {
-    name = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-pls-resource-group"
-    value = azurerm_resource_group.main.name
-  }
+  values = [
+    <<EOT
+    controller:
+      watchIngressWithoutClass: true
+      ingressClassResource:
+        default: true
+      replicaCount: 2
+      service:
+        loadBalancerIP: 10.1.1.128  # Needs to be an unused IP from AKS subnet
+        externalTrafficPolicy: Local
+        annotations:
+          service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+          service.beta.kubernetes.io/azure-pls-create: "true"
+          service.beta.kubernetes.io/azure-pls-name: "ocl-${local.environment}-ingress-pls"
+          service.beta.kubernetes.io/azure-pls-resource-group: "${azurerm_resource_group.main.name}"
+    EOT
+  ]
 }
 
 data "azurerm_private_link_service" "ingress" {
@@ -627,51 +602,54 @@ resource "helm_release" "keycloak" {
   create_namespace  = true
   force_update      = true
   dependency_update = true #helm repo update command
-  set {
-    name  = "replicaCount"
-    value = "2"
-  }
-  set {
-    name = "postgresql.enabled"
-    value = "false"
-  }
-  set {
-    name = "externalDatabase.host"
-    value = "ocl-qa-db.privatelink.postgres.database.azure.com"
-  }
-  set {
-    name = "externalDatabase.user"
-    value = "ocladmin"
-  }
-  set {
-    name = "proxy"
-    value = "edge"
-  }
 
-  set {
-    name = "externalDatabase.password"
-    value = random_password.postgresql.result
-  }
+  values = [
+    <<EOT
+    production: true
+    replicaCount: 2
+    postgresql:
+      enabled: false
+    externalDatabase:
+      host: "ocl-qa-db.privatelink.postgres.database.azure.com"
+      user: "ocladmin"
+      database: ocl-keycloak
+      password: ${random_password.postgresql.result}
+    port: 5432
+    proxy: "edge"
+    ingress:
+      enabled: true
+      hostname: "sso.qa.who.openconceptlab.org"
+    extraEnvVars:
+      - name: KEYCLOAK_EXTRA_ARGS
+        value: "--import-realm"
+    initContainers:
+      - name: copy-themes-and-realms
+        image: openconceptlab/oclsso:qa
+        imagePullPolicy: Always
+        command: ["/bin/sh"]
+        args: ["-c", "cp -R /opt/keycloak/themes/* /opt/bitnami/keycloak/themes && cp -R /opt/keycloak/data/import/* /opt/bitnami/keycloak/data/import"]
+        volumeMounts:
+          - name: themes
+            mountPath: /opt/bitnami/keycloak/themes
+          - name: realms
+            mountPath: /opt/bitnami/keycloak/data/import
+        securityContext:
+          runAsUser: 1001
+          runAsGroup: 1001
 
-  set {
-    name = "externalDatabase.database"
-    value = "ocl-keycloak"
-  }
+    extraVolumeMounts:
+      - name: themes
+        mountPath: /opt/bitnami/keycloak/themes
+      - name: realms
+        mountPath: /opt/bitnami/keycloak/data/import
 
-  set {
-    name = "externalDatabase.port"
-    value = "5432"
-  }
-
-  set {
-    name = "ingress.enabled"
-    value = "true"
-  }
-
-  set {
-    name = "ingress.hostname"
-    value = "sso.qa.who.openconceptlab.org"
-  }
+    extraVolumes:
+      - name: themes
+        emptyDir: {}
+      - name: realms
+        emptyDir: {}
+    EOT
+  ]
 }
 
 resource "kubernetes_namespace" "ocl" {
@@ -687,6 +665,7 @@ resource "kubernetes_namespace" "ocl" {
 resource "kubernetes_deployment" "oclapi2" {
   metadata {
     name = "oclapi2"
+    namespace = kubernetes_namespace.ocl.metadata.0.name
     labels = {
       App = "oclapi2"
     }
@@ -745,6 +724,7 @@ resource "kubernetes_deployment" "oclapi2" {
 resource "kubernetes_service" "oclapi2" {
   metadata {
     name = "oclapi2"
+    namespace = kubernetes_namespace.ocl.metadata.0.name
   }
   spec {
     selector = {
@@ -789,6 +769,7 @@ resource "kubernetes_ingress_v1" "oclapi" {
 resource "kubernetes_deployment" "oclfhir" {
   metadata {
     name = "oclfhir"
+    namespace = kubernetes_namespace.ocl.metadata.0.name
     labels = {
       App = "oclfhir"
     }
@@ -837,13 +818,6 @@ resource "kubernetes_deployment" "oclfhir" {
               memory = "512Mi"
             }
           }
-
-          liveness_probe {
-            http_get {
-              path = "/version"
-              port = 8000
-            }
-          }
         }
       }
     }
@@ -853,6 +827,7 @@ resource "kubernetes_deployment" "oclfhir" {
 resource "kubernetes_service" "oclfhir" {
   metadata {
     name = "oclfhir"
+    namespace = kubernetes_namespace.ocl.metadata.0.name
     annotations = {
     }
   }
@@ -899,6 +874,7 @@ resource "kubernetes_ingress_v1" "oclfhir" {
 resource "kubernetes_deployment" "oclflower" {
   metadata {
     name = "oclflower"
+    namespace = kubernetes_namespace.ocl.metadata.0.name
     labels = {
       App = "oclflower"
     }
@@ -967,6 +943,7 @@ resource "kubernetes_deployment" "oclflower" {
 resource "kubernetes_service" "oclflower" {
   metadata {
     name = "oclflower"
+    namespace = kubernetes_namespace.ocl.metadata.0.name
   }
   spec {
     selector = {
@@ -1011,6 +988,7 @@ resource "kubernetes_ingress_v1" "oclflower" {
 resource "kubernetes_deployment" "oclcelery" {
   metadata {
     name = "oclcelery"
+    namespace = kubernetes_namespace.ocl.metadata.0.name
     labels = {
       App = "oclcelery"
     }
@@ -1069,6 +1047,7 @@ resource "kubernetes_deployment" "oclcelery" {
 resource "kubernetes_deployment" "oclcelerybeat" {
   metadata {
     name = "oclcelerybeat"
+    namespace = kubernetes_namespace.ocl.metadata.0.name
     labels = {
       App = "oclcelerybeat"
     }
@@ -1127,6 +1106,7 @@ resource "kubernetes_deployment" "oclcelerybeat" {
 resource "kubernetes_deployment" "oclceleryindexing" {
   metadata {
     name = "oclceleryindexing"
+    namespace = kubernetes_namespace.ocl.metadata.0.name
     labels = {
       App = "oclceleryindexing"
     }
@@ -1185,6 +1165,7 @@ resource "kubernetes_deployment" "oclceleryindexing" {
 resource "kubernetes_deployment" "oclceleryconcurrent" {
   metadata {
     name = "oclceleryconcurrent"
+    namespace = kubernetes_namespace.ocl.metadata.0.name
     labels = {
       App = "oclceleryconcurrent"
     }
@@ -1243,6 +1224,7 @@ resource "kubernetes_deployment" "oclceleryconcurrent" {
 resource "kubernetes_deployment" "oclcelerybulkimportroot" {
   metadata {
     name = "oclcelerybulkimportroot"
+    namespace = kubernetes_namespace.ocl.metadata.0.name
     labels = {
       App = "oclcelerybulkimportroot"
     }
@@ -1301,6 +1283,7 @@ resource "kubernetes_deployment" "oclcelerybulkimportroot" {
 resource "kubernetes_deployment" "oclcelerybulkimport0-1" {
   metadata {
     name = "oclcelerybulkimport0-1"
+    namespace = kubernetes_namespace.ocl.metadata.0.name
     labels = {
       App = "oclcelerybulkimport0-1"
     }
@@ -1359,6 +1342,7 @@ resource "kubernetes_deployment" "oclcelerybulkimport0-1" {
 resource "kubernetes_deployment" "oclcelerybulkimport2-3" {
   metadata {
     name = "oclcelerybulkimport2-3"
+    namespace = kubernetes_namespace.ocl.metadata.0.name
     labels = {
       App = "oclcelerybulkimport2-3"
     }
