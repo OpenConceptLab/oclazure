@@ -31,3 +31,6 @@ Deployments will be setup using Github Actions. There will be a manually trigger
 ## Authentication
 To start with OCL API will be deployed with internal authentication mechanism (django auth). It will be reconfigured to use Azure Active Directory SSO implementation.
 
+## The OCL Digital Public Good
+
+This repository is not part of the [OCL Digital Public Good](https://github.com/OpenConceptLab/.github/blob/main/DIGITAL-PUBLIC-GOOD.md). That page lists the repositories that are.
